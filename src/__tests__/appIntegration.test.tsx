@@ -16,7 +16,7 @@ import { MonitorPanel } from "../components/MonitorPanel";
 import type { OrphanPage } from "../components/OrphanPage";
 import type { ManageListPage } from "../components/ManageListPage";
 import type { AppDetailPanel } from "../components/AppDetailPanel";
-import type { CleanupReport, FullCleanupReport, InstalledApp, InstalledAppsSnapshot, ScanResult } from "../types";
+import type { CleanupReport, FullCleanupReport, InstalledApp, InstalledAppsSnapshot, OfficialUninstallResult, ScanResult } from "../types";
 
 const native = vi.hoisted(() => ({
   listApps: vi.fn(), analyze: vi.fn(), dryRun: vi.fn(), fullCleanup: vi.fn(), officialUninstall: vi.fn(),
@@ -814,6 +814,27 @@ describe("App orchestration", () => {
       expect(native.fullCleanup).toHaveBeenLastCalledWith(expect.anything(), expect.anything(),
         expect.objectContaining({ skip_official_uninstall: true }), 51);
     }
+  });
+
+  it.each(["deep", "official"] as const)("shows the vendor wait only while the %s native call is pending", async entry => {
+    native.showRealSoftwarePage = true;
+    native.requestConfirmEx.mockResolvedValue({ ok: true, checked: false });
+    native.requestConfirm.mockResolvedValue(true);
+    let finish!: (result: OfficialUninstallResult) => void;
+    native.officialUninstall.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    await mount();
+    if (entry === "deep") act(() => software().listStartUninstall(demo));
+    else {
+      act(() => software().selectApp(demo));
+      await screen.findByTestId("detail");
+      act(() => detail().onOfficialOnly?.(demo));
+    }
+    const L = i18n.t();
+    await waitFor(() => expect(native.officialUninstall).toHaveBeenCalledOnce());
+    expect((await screen.findByText(L.stageOfficial)).getAttribute("role")).toBe("status");
+    await act(async () => finish({ ok: false, had_command: true, message: "uninstaller exited with Some(1602)" }));
+    await waitFor(() => expect(screen.queryByText(L.stageOfficial)).toBeNull());
+    expect(native.fullCleanup).not.toHaveBeenCalled();
   });
 
   it.each([true, false])("keeps official-only completion distinct from pending residual cleanup (scan=%s)", async checked => {

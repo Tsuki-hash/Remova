@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
-import { CloseGlyph, Deco } from "./ui/Glyph";
+import { BackButton } from "./ui/BackButton";
+import { Deco } from "./ui/Glyph";
 import type { VerifyRow } from "../lib/api";
 import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
@@ -118,6 +119,7 @@ export function ReportPanel({
   const backupSession = backupDir && "backup_verified" in report && report.backup_verified === true
     ? backupDir.split(/[\\/]/).filter(Boolean).at(-1) : undefined;
   const planned = report.dry_run ? ("deleted_planned" in report ? report.deleted_planned : report.deleted) : null;
+  const result = !report.dry_run && "deleted" in report ? report : null;
   return (
     <div
       ref={panel}
@@ -133,15 +135,31 @@ export function ReportPanel({
         <strong>
           {"dry_run" in report && report.dry_run ? L.dryRunSummary : L.batchSummary}: {report.app_name}
         </strong>
-        <button style={{ ...css.btnGhost, height: 28, marginLeft: "auto" }} onClick={onDismiss} aria-label={L.panelClose}>
-          <CloseGlyph />
-        </button>
+        <BackButton style={{ marginLeft: "auto" }} onClick={onDismiss} />
       </div>
       {planned !== null && (
         <p role="status" style={{ display: "flex", flexWrap: "wrap", gap: "4px 16px", margin: "8px 0" }}>
           <strong>{L.dryRunPlanned} {planned}</strong>
           <span style={css.muted}>{L.reportSkipped} {report.skipped}</span>
         </p>
+      )}
+      {result && (
+        <div role="group" aria-label={L.cleanupResultCounts} style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+          {[
+            { label: L.reportDeleted, value: result.deleted, tone: "var(--ok-ink)" },
+            { label: L.reportSkipped, value: result.skipped, tone: "var(--muted)" },
+            { label: L.reportFailed, value: result.failed, tone: "var(--danger-text)" },
+            { label: L.reportPendingReboot, value: result.delayed ?? 0, tone: "var(--warn-ink)" },
+          ].map(({ label, value, tone }) => (
+            <div key={label} style={{
+              minWidth: 64, padding: "6px 10px", border: "1px solid var(--border)",
+              borderRadius: 8, background: "var(--surface)",
+            }}>
+              <strong style={{ fontSize: 18, color: tone }}>{value}</strong>
+              <div style={css.muted}>{label}</div>
+            </div>
+          ))}
+        </div>
       )}
       {"uninstall_ok" in report && !report.dry_run && !report.aborted && (report.uninstall_ok || residualScan) && (
         <div role="status" style={{ marginTop: 8, lineHeight: 1.6 }}>
@@ -171,63 +189,32 @@ export function ReportPanel({
             : null}
         </div>
       ) : null}
-      {!report.dry_run && (
+      {(result || onRescan) && (
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
-          <button style={{ ...css.btnGhost, height: 28 }} disabled={auditBusy} onClick={() => void exportAudit("json", false)}>
-            {L.auditExportJson}
-          </button>
-          <button style={{ ...css.btnGhost, height: 28 }} disabled={auditBusy} onClick={() => void exportAudit("md", false)}>
-            {L.auditExportMd}
-          </button>
-          <button style={{ ...css.btnGhost, height: 28 }} disabled={auditBusy} onClick={() => void exportAudit("json", true)}>
-            {L.auditExportSummary}
-          </button>
+          {backupSession ? (
+            <>
+              <span style={{ alignSelf: "center", color: "var(--ok-ink)" }}><Deco ch="✓" /> {L.safetyVaultBanner}</span>
+              <button type="button" style={css.btnGhost}
+                aria-label={`${L.restorePreviewTitle}: ${backupSession}`} onClick={() => requestBackupSession(backupSession)}>
+                {L.restorePreviewTitle}
+              </button>
+            </>
+          ) : result && (
+            <span role="note" style={{ alignSelf: "center", color: "var(--warn-ink)" }}>
+              {backupDir ? L.unverifiedBackupThisRun : L.noBackupThisRun}
+            </span>
+          )}
+          {onRescan && (
+            <button type="button" style={css.btnGhost} disabled={rescanBusy} onClick={onRescan}>
+              {rescanBusy ? L.analyzing : L.reportRescanApp}
+            </button>
+          )}
         </div>
       )}
 
-      <details open={!report.dry_run && "aborted" in report && (report.aborted || report.failed > 0)} style={{ marginTop: 8 }}>
-        <summary style={{ cursor: "pointer", fontWeight: 600 }}>
-          {L.cleanupReportDetails}{!report.dry_run && "deleted" in report ? ` · ${L.reportDeleted} ${report.deleted} · ${L.reportFailed} ${report.failed} · ${L.reportSkipped} ${report.skipped} · ${L.reportPendingReboot} ${report.delayed ?? 0}` : ""}
-        </summary>
+      <details open={Boolean(result && (result.aborted || result.failed || result.skipped))} style={{ marginTop: 8 }}>
+        <summary style={{ cursor: "pointer", fontWeight: 600 }}>{L.cleanupReportDetails}</summary>
         <div style={{ maxHeight: 360, overflow: "auto" }}>
-      {"backup_dir" in report &&
-        (backupSession ? (
-          <div
-            style={{
-              marginTop: 8,
-              padding: "6px 10px",
-              borderRadius: 8,
-              background: "var(--ok)",
- // Dark ink keeps AA contrast on the ok token in both themes
- // (white on the dark-theme green falls below 4.5:1).
-              color: "#0B1220",
-              fontSize: 12,
-              fontWeight: 600,
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 8,
-              width: "fit-content",
-            }}
-          >
-            <Deco ch="✓" /> {L.safetyVaultBanner}
-          </div>
-        ) : !report.dry_run ? (
-          <div
-            role="note"
-            style={{
-              marginTop: 8,
-              padding: "6px 10px",
-              borderRadius: 8,
-              border: "1px solid var(--warn-ink)",
-              color: "var(--warn-ink)",
-              fontSize: 12,
-              fontWeight: 600,
-              width: "fit-content",
-            }}
-          >
-            {backupDir ? L.unverifiedBackupThisRun : L.noBackupThisRun}
-          </div>
-        ) : null)}
       {!report.dry_run && "deleted" in report && (
         <div
           style={{
@@ -304,30 +291,6 @@ export function ReportPanel({
           );
         })()}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10 }}>
-        {(!report.dry_run && "deleted" in report ? [
-              { label: L.reportDeleted, value: report.deleted, tone: "var(--ok)" },
-              { label: L.reportFailed, value: report.failed, tone: "var(--danger)" },
-              { label: L.reportSkipped, value: report.skipped, tone: "var(--muted)" },
-              { label: L.reportPendingReboot, value: report.delayed ?? 0, tone: "var(--warn-ink)" },
-            ] : []
-        ).map((s) => (
-          <div
-            key={s.label}
-            style={{
-              minWidth: 72,
-              padding: "8px 12px",
-              borderRadius: 10,
-              background: "var(--surface)",
-              border: "1px solid var(--border)",
-              textAlign: "center" as const,
-            }}
-          >
-            <div style={{ fontSize: 20, fontWeight: 700, color: s.tone, lineHeight: 1.1 }}>
-              {s.value}
-            </div>
-            <div style={{ ...css.muted, fontSize: 11, marginTop: 2 }}>{s.label}</div>
-          </div>
-        ))}
         {backupDir && (
           <button
             style={{ ...css.btnGhost, height: 36, alignSelf: "center" }}
@@ -343,19 +306,6 @@ export function ReportPanel({
             }}
           >
             {L.openBackupDir}
-          </button>
-        )}
-        {backupSession && <button style={{ ...css.btnGhost, height: 36, alignSelf: "center" }}
-          aria-label={`${L.restorePreviewTitle}: ${backupSession}`} onClick={() => requestBackupSession(backupSession)}>
-          {L.restorePreviewTitle}
-        </button>}
-        {onRescan && (
-          <button
-            style={{ ...css.btnGhost, height: 36, alignSelf: "center" }}
-            disabled={rescanBusy}
-            onClick={onRescan}
-          >
-            {rescanBusy ? L.analyzing : L.reportRescanApp}
           </button>
         )}
         {aiEnabled && !report.dry_run && "deleted" in report && (
@@ -414,6 +364,7 @@ export function ReportPanel({
           items={report.item_details}
           lockRoot={appInstallLocation}
           onRescan={onRescan}
+          expandSkipped={Boolean(result?.skipped)}
         />
       )}
       {"uninstall_message" in report && report.uninstall_message && (
@@ -451,6 +402,19 @@ export function ReportPanel({
       </details>
         </div>
       </details>
+      {result && (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+          <button type="button" style={css.btnGhost} disabled={auditBusy} onClick={() => void exportAudit("json", false)}>
+            {L.auditExportJson}
+          </button>
+          <button type="button" style={css.btnGhost} disabled={auditBusy} onClick={() => void exportAudit("md", false)}>
+            {L.auditExportMd}
+          </button>
+          <button type="button" style={css.btnGhost} disabled={auditBusy} onClick={() => void exportAudit("json", true)}>
+            {L.auditExportSummary}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

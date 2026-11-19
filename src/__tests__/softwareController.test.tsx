@@ -44,7 +44,6 @@ function input(overrides: Partial<SoftwareControllerInput> = {}): SoftwareContro
     selected: null,
     multi: new Set<string>(),
     uninstallingKey: null,
-    formatAppSize: () => "0 KB",
     sizeOf: () => 0,
     sortBy: noop,
     selectApp: noop,

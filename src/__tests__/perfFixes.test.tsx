@@ -94,6 +94,21 @@ describe("sort scores each row once", () => {
     const name = renderHook(() => useAppFilter({ ...base, sortCol: "name", sortDesc: false }));
     expect(name.result.current.filtered.map(a => a.name)).toEqual(["Alpha", "Beta"]);
   });
+
+  it.each([true, false])("orders the registered size independently of measured bytes and keeps unknowns last (descending=%s)", sortDesc => {
+    const apps = [
+      app("Unknown", { estimated_size_kb: 0 }),
+      app("Small", { estimated_size_kb: 100 }),
+      app("Large", { estimated_size_kb: 900 }),
+    ];
+    const { result } = renderHook(() => useAppFilter({
+      apps, copilotList: null, deferredQ: "", category: "all", sortCol: "size", sortDesc,
+      sizeOf: a => a.name === "Unknown" ? 1024 : 0, ignorePub: [], ignoreName: [],
+      setSortCol: vi.fn(), setSortDesc: vi.fn(),
+    }));
+    expect(result.current.filtered.map(a => a.name)).toEqual(sortDesc
+      ? ["Large", "Small", "Unknown"] : ["Small", "Large", "Unknown"]);
+  });
 });
 
 describe("the appKey map is only built when the copilot branch runs", () => {

@@ -92,15 +92,6 @@ export function useAnalyzeFlow({
   } = flow;
   const analyzeSeqRef = useRef(0);
   const { run: runScan, cancel: cancelScan, progress: scanProgress } = useAssociationScan();
-  /** Stage idle timers must be cleared on unmount / replacement. */
-  const stageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const clearStageTimer = useCallback(() => {
-    if (stageTimerRef.current !== null) {
-      clearTimeout(stageTimerRef.current);
-      stageTimerRef.current = null;
-    }
-  }, []);
-  useEffect(() => clearStageTimer, [clearStageTimer]);
   useEffect(() => () => { analyzeSeqRef.current++; }, []);
   // Only the holder of the foreground slot calls this. Official uninstall
   // keeps its slot through the nested scan and the installed-app refresh.
@@ -236,7 +227,7 @@ export function useAnalyzeFlow({
       const { ok, checked } = await requestConfirmEx({
         title: strings.uninstallConfirmDeepTitle || strings.uninstallFlowDeep,
         message: `${strings.uninstallConfirmDeepBody(label)}\n\n${steps.map((s, i) => `${i + 1}. ${s}`).join("\n")}${commandLine}`,
-        confirmLabel: strings.drawerDeepUninstall,
+        confirmLabel: strings.uninstallFlowStepOfficial,
         checkbox: {
           label: strings.uninstallRescanAfter,
           defaultChecked: defaultRescan,
@@ -244,47 +235,29 @@ export function useAnalyzeFlow({
       });
       if (!ok) return;
       if (busyRef.current) return;
- // kill the previous run's stage timer here — its 2.2s tail
- // would otherwise fire mid-run and flip the bar back to idle.
-      clearStageTimer();
       saveRescanAfterUninstall(checked);
       const key = appKey(app);
       setUninstallingKey(key);
       setSelected(app);
       busyRef.current = true;
       try {
-        setUninstallStage("identify");
-        await new Promise((r) => setTimeout(r, 280));
         setUninstallStage("official");
         const r = await api.officialUninstall(app);
+        setUninstallStage("idle");
         const rebootPending = Boolean(r.had_command && r.ok && r.reboot_initiated);
         notifyUninstall(r, strings);
         rememberUninstall(app, r);
         // MSI 1641 already started a restart: scanning is harmless, but offering
         // residual cleanup now would delete while the shutdown is pending.
         if (r.had_command && r.ok && checked && !rebootPending && r.uninstall_review !== undefined) {
-          setUninstallStage("scan");
-          toast.info(strings.stageScanLeftover, { channel: "analyze-flow", sticky: true });
-          const analyzed = await scanApp(app, { uninstallReview: r.uninstall_review });
-          if (analyzed) {
-            setUninstallStage("analyze");
-            await new Promise((resolve) => setTimeout(resolve, 320));
-            setUninstallStage("report");
-            clearStageTimer();
-            stageTimerRef.current = setTimeout(() => setUninstallStage("idle"), 2200);
-          } else {
-            setUninstallStage("idle");
-          }
-        } else {
-          setUninstallStage("idle");
+          await scanApp(app, { uninstallReview: r.uninstall_review });
         }
         await refreshApps();
       } catch (e) {
-        clearStageTimer();
-        setUninstallStage("idle");
         setError(formatError(e, "cleanup"));
         toast.error(formatError(e, "cleanup"), { channel: "analyze-flow" });
       } finally {
+        setUninstallStage("idle");
         busyRef.current = false;
         setUninstallingKey(null);
       }
@@ -298,7 +271,6 @@ export function useAnalyzeFlow({
       setUninstallStage,
       setError,
       busyRef,
-      clearStageTimer,
     ],
   );
 
@@ -317,46 +289,36 @@ const openOfficialOnly = useCallback(
       const ok = await requestConfirm({
         title: strings.drawerOfficial,
         message: strings.uninstallConfirm(label),
-        confirmLabel: strings.drawerOfficial,
+        confirmLabel: strings.uninstallFlowStepOfficial,
       });
       if (!ok) return;
       if (busyRef.current) return;
-      // A previous stage timer must not fire during this run and flip the bar
-      // back to idle before the official uninstaller finishes.
-      clearStageTimer();
       const key = appKey(app);
       setUninstallingKey(key);
       setSelected(app);
       busyRef.current = true;
       try {
+        setUninstallStage("official");
         const r = await api.officialUninstall(app);
+        setUninstallStage("idle");
         const rebootPending = Boolean(r.had_command && r.ok && r.reboot_initiated);
         notifyUninstall(r, strings);
         rememberUninstall(app, r);
  // default-on rescan after successful official uninstall only.
         if (r.had_command && r.ok && !rebootPending && r.uninstall_review !== undefined && loadRescanAfterUninstall()) {
-          setUninstallStage("scan");
-          const analyzed = await scanApp(app, { uninstallReview: r.uninstall_review });
-          if (analyzed) {
-            setUninstallStage("analyze");
-            await new Promise((resolve) => setTimeout(resolve, 280));
-            setUninstallStage("report");
-            clearStageTimer();
-            stageTimerRef.current = setTimeout(() => setUninstallStage("idle"), 2000);
-          } else {
-            setUninstallStage("idle");
-          }
+          await scanApp(app, { uninstallReview: r.uninstall_review });
         }
         await refreshApps();
       } catch (e) {
         setError(formatError(e, "cleanup"));
         toast.error(formatError(e, "cleanup"));
       } finally {
+        setUninstallStage("idle");
         busyRef.current = false;
         setUninstallingKey(null);
       }
     },
-    [refreshApps, setSelected, rememberUninstall, setUninstallingKey, setError, busyRef, scanApp, setUninstallStage, clearStageTimer],
+    [refreshApps, setSelected, rememberUninstall, setUninstallingKey, setError, busyRef, scanApp, setUninstallStage],
   );
 
   const openAnalyzeFromDrawer = useCallback(

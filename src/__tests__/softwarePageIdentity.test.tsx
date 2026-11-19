@@ -70,7 +70,6 @@ function props(over: Partial<ComponentProps<typeof SoftwarePage>> = {}) {
     selected: demo,
     multi: new Set<string>(),
     uninstallingKey: null,
-    formatAppSize: () => "100 KB",
     sizeOf: () => 100,
     sortBy: vi.fn(),
     selectApp: vi.fn(),

@@ -242,6 +242,7 @@ export const api = {
   listDirChildren: (path: string, scanId?: number) => invoke<DirChildrenResult>("list_dir_children", { path, scanId }),
   inspectFolderReferences: (path: string, scanId: number) =>
     invoke<FolderReferences | { checked: FolderReferenceSource[] }>("inspect_folder_references", { path, scanId }),
+  pickReferenceFolder: () => invoke<string | null>("pick_reference_folder"),
   isElevated: () => invoke<boolean>("is_elevated"),
   elevateRestart: (approved = false) => invoke("elevate_restart", { approved }),
   openPath: (path: string) => invoke("open_path_in_explorer", { path }),

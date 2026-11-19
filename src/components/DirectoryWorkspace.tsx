@@ -116,6 +116,13 @@ function FolderReferencePanel({
   const request = useRef(0);
   const { runReadOnly, cancel, progress } = useAssociationScan();
   const [failed, setFailed] = useState(false);
+  const [choosingFolder, setChoosingFolder] = useState(false);
+  const [pickerFailed, setPickerFailed] = useState(false);
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
   const check = useCallback(() => {
     if (!path) return;
     const requestId = ++request.current;
@@ -146,6 +153,24 @@ function FolderReferencePanel({
     service: L.folderInspectService,
   };
   const running = progress?.status === "running" || progress?.status === "stopping";
+  const chooseFolder = async () => {
+    if (choosingFolder) return;
+    setChoosingFolder(true);
+    setPickerFailed(false);
+    try {
+      const picked = await api.pickReferenceFolder();
+      if (!mounted.current || !picked) return;
+      if (picked !== path) onInspect(picked);
+      else {
+        setInput(picked);
+        if (!running) check();
+      }
+    } catch {
+      if (mounted.current) setPickerFailed(true);
+    } finally {
+      if (mounted.current) setChoosingFolder(false);
+    }
+  };
   return (
     <div className="folder-references">
       <form className="folder-reference-form" onSubmit={event => {
@@ -159,9 +184,13 @@ function FolderReferencePanel({
           {L.folderInspectPath}
           <input style={css.input} value={input} onChange={event => setInput(event.target.value)} spellCheck={false} required />
         </label>
+        <button type="button" style={css.btnGhost} disabled={choosingFolder} onClick={() => void chooseFolder()}>
+          {L.folderInspectChoose}
+        </button>
         <button type="submit" style={css.btn} disabled={running && input.trim() === path}>{L.folderInspectRun}</button>
       </form>
       <p className="folder-reference-note">{L.folderInspectScope}</p>
+      {pickerFailed && <p role="alert">{L.folderInspectPickerFailed}</p>}
       {path && (
         <div className="folder-reference-path">
           <code>{path}</code>

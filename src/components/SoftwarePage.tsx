@@ -8,7 +8,7 @@ import type {
   IgnoreSuggestion,
   ScanResult,
 } from "../types";
-import type { CategoryId, SortCol } from "../lib/categories";
+import type { CategoryId, SortCol, SortSoftware } from "../lib/categories";
 import type { LinkedBucketId } from "../lib/linkedItems";
 import { findReportApp, scanMatchesApp } from "../lib/appKey";
 import { shouldRescanAfterUninstall } from "../lib/cleanupFeedback";
@@ -87,9 +87,8 @@ export type SoftwarePageProps = {
   scanTarget?: InstalledApp | null;
   multi: Set<string>;
   uninstallingKey: string | null;
-  formatAppSize: (a: InstalledApp) => string;
   sizeOf: (a: InstalledApp) => number;
-  sortBy: (col: "name" | "size" | "recommend") => void;
+  sortBy: SortSoftware;
   selectApp: (a: InstalledApp) => void;
   setSelected: (a: InstalledApp | null) => void;
   toggleMulti: (key: string) => void;
@@ -238,6 +237,9 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
         searchRef={softwareSearch}
         q={p.q}
         category={p.category}
+        sortCol={p.sortCol}
+        sortDesc={p.sortDesc}
+        sortBy={p.sortBy}
         estimating={p.estimating}
         scanning={p.scanning}
         aiEnabled={p.aiEnabled}
@@ -502,7 +504,6 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
               multi={p.multi}
               uninstallingKey={p.uninstallingKey}
               appKey={p.appKey}
-              sizeText={p.formatAppSize}
               sizeOf={p.sizeOf}
               sortBy={p.sortBy}
               selectApp={app => {

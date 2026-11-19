@@ -69,6 +69,7 @@ const COMMAND_KEYS = [
   "listTopDirSizes",
   "listDirChildren",
   "inspectFolderReferences",
+  "pickReferenceFolder",
   "listLocalDrives",
   "diskRadarVolumeId",
   "isElevated",

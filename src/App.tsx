@@ -726,7 +726,6 @@ export default function App() {
     scanTarget: core.scanTarget,
     multi,
     uninstallingKey,
-    formatAppSize,
     sizeOf,
     sortBy,
     selectApp,

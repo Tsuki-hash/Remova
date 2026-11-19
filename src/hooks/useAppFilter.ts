@@ -2,7 +2,7 @@ import { useCallback, useMemo } from "react";
 import type { InstalledApp } from "../types";
 import { appKey } from "../lib/appKey";
 import { recommendScore, LARGE_APP_KB } from "../lib/decision";
-import type { CategoryId, SortCol } from "../lib/categories";
+import type { CategoryId, SortCol, SortSoftware } from "../lib/categories";
 
 export type { CategoryId, SortCol };
 
@@ -71,6 +71,14 @@ export function useAppFilter({
       );
     }
     if (!sortCol) return list;
+    if (sortCol === "size") {
+      const direction = sortDesc ? -1 : 1;
+      return [...list].sort((a, b) => {
+        const aKb = Math.max(0, a.estimated_size_kb);
+        const bKb = Math.max(0, b.estimated_size_kb);
+        return Number(aKb === 0) - Number(bKb === 0) || direction * (aKb - bKb);
+      });
+    }
     // performance fix: decorate-sort-undecorate. The comparator used to call
     // `recommendScore` (regex + `Date` parsing) inside every comparison —
     // O(n log n) evaluations, about 5,000 regexes for a 300-row list. Each row is
@@ -78,28 +86,23 @@ export function useAppFilter({
     const decorated = [...list].map((app) => ({
       app,
       name: (app.name || "").toLowerCase(),
-      kb: sortCol === "size" ? sizeOf(app) : 0,
       // `recommendScore` is only meaningful for the recommend column; higher
       // score sorts first, which the descending comparator below reproduces.
       score: sortCol === "recommend" ? recommendScore(app, sizeOf(app)) : 0,
     }));
     decorated.sort((a, b) =>
-      sortCol === "name"
-        ? a.name.localeCompare(b.name)
-        : sortCol === "recommend"
-          ? b.score - a.score
-          : a.kb - b.kb,
+      sortCol === "name" ? a.name.localeCompare(b.name) : b.score - a.score,
     );
     const s = decorated.map((d) => d.app);
     return sortDesc ? s.reverse() : s;
   }, [apps, copilotList, deferredQ, sortCol, sortDesc, sizeOf, ignorePub, ignoreName, category]);
 
-  const sortBy = useCallback(
-    (col: "name" | "size" | "recommend") => {
-      if (sortCol === col) setSortDesc((d) => !d);
+  const sortBy = useCallback<SortSoftware>(
+    (col, descending) => {
+      if (descending === undefined && sortCol === col && col !== null) setSortDesc((d) => !d);
       else {
         setSortCol(col);
-        setSortDesc(col === "size");
+        setSortDesc(descending ?? col === "size");
       }
     },
     [sortCol, setSortCol, setSortDesc],

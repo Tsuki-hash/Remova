@@ -1967,6 +1967,22 @@ async fn inspect_folder_references(
         .map_err(|error| error.to_string())?
 }
 
+#[tauri::command]
+async fn pick_reference_folder(window: tauri::WebviewWindow) -> Result<Option<String>, String> {
+    #[cfg(windows)]
+    {
+        let hwnd = window.hwnd().map_err(|_| "folder:picker_unavailable")?.0 as isize;
+        tauri::async_runtime::spawn_blocking(move || folder_references::pick_folder(hwnd))
+            .await
+            .map_err(|_| "folder:picker_unavailable")?
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = window;
+        Err("folder:picker_unavailable".into())
+    }
+}
+
 /// re-check selected paths after cleanup (checklist evidence).
 #[tauri::command]
 async fn verify_cleanup_leftovers(
@@ -2304,6 +2320,7 @@ pub fn run() {
         // `list_top_dir_sizes`
         // `list_dir_children`
         // `inspect_folder_references`
+        // `pick_reference_folder`
         // `verify_cleanup_leftovers`
         // `begin_install_monitor`
         // `end_install_monitor`
@@ -2411,6 +2428,7 @@ pub fn run() {
             list_top_dir_sizes,
             list_dir_children,
             inspect_folder_references,
+            pick_reference_folder,
             verify_cleanup_leftovers,
             begin_install_monitor,
             end_install_monitor,

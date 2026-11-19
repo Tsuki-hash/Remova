@@ -2,7 +2,7 @@ import { useCallback, useLayoutEffect, useMemo, useRef, type KeyboardEvent } fro
 import { Deco } from "./ui/Glyph";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { InstalledApp } from "../types";
-import { t } from "../i18n";
+import { formatSize, t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { AppRow } from "./AppRow";
 import { useListViewportHeight } from "../hooks/useListViewportHeight";
@@ -21,7 +21,6 @@ export function SoftwareListTable({
   multi,
   uninstallingKey,
   appKey,
-  sizeText,
   sizeOf,
   sortBy,
   selectApp,
@@ -46,7 +45,6 @@ export function SoftwareListTable({
   multi: Set<string>;
   uninstallingKey: string | null;
   appKey: (a: InstalledApp) => string;
-  sizeText: (a: InstalledApp) => string;
   sizeOf: (a: InstalledApp) => number;
   sortBy: (col: "name" | "size" | "recommend") => void;
   selectApp: (a: InstalledApp) => void;
@@ -136,7 +134,7 @@ export function SoftwareListTable({
         rowKey={key}
         selected={selected?.registry_key === a.registry_key && selected.name === a.name}
         checked={multi.has(key)}
-        sizeText={sizeText(a)}
+        sizeText={a.estimated_size_kb > 0 ? formatSize(a.estimated_size_kb) : "—"}
         sizeKb={sizeOf(a)}
         variantCount={variantCounts.get(a.name.trim().toLowerCase()) ?? 1}
         uninstalling={uninstallingKey === key}
@@ -165,7 +163,7 @@ export function SoftwareListTable({
         <colgroup>
           <col style={{ width: 40 }} />
           <col />
-          <col style={{ width: 100 }} />
+          <col style={{ width: 114 }} />
           <col style={{ width: 150 }} />
         </colgroup>
         <thead>
@@ -200,7 +198,7 @@ export function SoftwareListTable({
               tabIndex={0}
               aria-sort={sortCol === "size" ? (sortDesc ? "descending" : "ascending") : undefined}
             >
-              {L.colSize} {sortCol === "size" ? (sortDesc ? "↓" : "↑") : ""}
+              {L.detailRegisteredSize} {sortCol === "size" ? (sortDesc ? "↓" : "↑") : ""}
             </th>
             <th style={{ ...css.th, textAlign: "right" as const }}>{L.actionCol}</th>
           </tr>

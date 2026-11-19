@@ -124,11 +124,16 @@ it("shows deleted, kept, and pending-reboot sizes in the report", () => {
   expect(container.textContent).toContain(t().reportPendingKb("512 KB"));
 });
 
-it.each(["zh", "en"] as const)("states the backup prerequisite in the actual guide in %s", lang => {
+it.each(["zh", "en"] as const)("shows the explicit sort control and backup prerequisite in %s", lang => {
   setLang(lang);
+  const sortBy = vi.fn();
   render(<SoftwareToolbar q="" category="all" estimating={false} scanning={false} aiEnabled={false}
+    sortCol={null} sortDesc={false} sortBy={sortBy}
     smartFilterOpen={false} onQuery={() => {}} onCategory={() => {}} onStopEstimate={() => {}}
     onOpenAi={() => {}} onToggleSmartFilter={() => {}} />);
+  const choice = screen.getByRole<HTMLOptionElement>("option", { name: t().softwareSortSize });
+  fireEvent.change(screen.getByRole("combobox", { name: t().softwareSort }), { target: { value: choice.value } });
+  expect(sortBy).toHaveBeenCalledWith("size", true);
   fireEvent.click(screen.getByRole("button", { name: t().guided }));
   expect(screen.getByRole("note").textContent).toContain(lang === "zh" ? "未备份无法找回" : "Unbacked cleanup cannot be undone");
 });
@@ -160,8 +165,9 @@ it.each(["zh", "en"] as const)("offers restoration only for a verified backup in
     const view = render(<ReportPanel report={report} aiEnabled={false} aiReportBusy={false}
       aiReportNote={null} verifyRows={null} onDismiss={() => {}} onRegenerate={() => {}} />);
     const hasRestoration = report.backup_verified === true && !report.dry_run;
-    expect(screen.queryByRole("button", { name: `${t().restorePreviewTitle}: session` }) !== null)
-      .toBe(hasRestoration);
+    const restore = screen.queryByRole("button", { name: `${t().restorePreviewTitle}: session` });
+    expect(Boolean(restore)).toBe(hasRestoration);
+    if (restore) expect(restore.closest("details")).toBeNull();
     expect(screen.queryByText(t().safetyVaultBanner) !== null).toBe(hasRestoration);
     expect(Boolean(screen.queryByText(t().reportNarrative(report.deleted, report.failed, report.skipped, hasRestoration))))
       .toBe(!report.dry_run);
@@ -171,6 +177,22 @@ it.each(["zh", "en"] as const)("offers restoration only for a verified backup in
     }
     view.unmount();
   }
+});
+
+it("keeps the cleanup counts, skipped reason and return visible on the report", () => {
+  const L = t();
+  const onDismiss = vi.fn();
+  const report: FullCleanupReport = { app_name: "fixture", dry_run: false, backup_dir: "",
+    uninstall_ok: false, uninstall_message: "", deleted: 0, failed: 0, skipped: 1,
+    aborted: false, restore_point_ok: false, restore_point_msg: "", errors: [],
+    item_details: [{ path: "C:\\Fixture\\project", kind: "dir", status: "skipped", message: "user_data" }] };
+  render(<ReportPanel report={report} aiEnabled={false} aiReportBusy={false} aiReportNote={null}
+    verifyRows={null} onDismiss={onDismiss} onRegenerate={() => {}} />);
+  expect(screen.getByRole("group", { name: L.cleanupResultCounts }).closest("details")).toBeNull();
+  expect(screen.getByText(L.reasonUserData).closest("details")?.open).toBe(true);
+  expect(screen.getByText(L.cleanupReportDetails).closest("details")?.open).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: L.navBack }));
+  expect(onDismiss).toHaveBeenCalledOnce();
 });
 
 it("offers a post-cleanup rescan button and honors the busy state", () => {

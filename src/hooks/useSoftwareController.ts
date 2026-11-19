@@ -8,7 +8,7 @@ import type {
   ScanCompleteness,
   ScanResult,
 } from "../types";
-import type { CategoryId, SortCol } from "../lib/categories";
+import type { CategoryId, SortCol, SortSoftware } from "../lib/categories";
 import type { LinkedBucketId } from "../lib/linkedItems";
 import type { UninstallStage } from "../components/UninstallStageBar";
 import type { BatchItemResult } from "../components/BatchPanels";
@@ -31,9 +31,8 @@ export type SoftwareControllerInput = {
   scanTarget?: InstalledApp | null;
   multi: Set<string>;
   uninstallingKey: string | null;
-  formatAppSize: (a: InstalledApp) => string;
   sizeOf: (a: InstalledApp) => number;
-  sortBy: (col: "name" | "size" | "recommend") => void;
+  sortBy: SortSoftware;
   selectApp: (a: InstalledApp) => void;
   toggleMulti: (key: string) => void;
   listStartUninstall: (a: InstalledApp) => void;
@@ -153,7 +152,6 @@ export function useSoftwareController(input: SoftwareControllerInput): SoftwareP
         scanTarget: input.scanTarget,
         multi: input.multi,
         uninstallingKey: input.uninstallingKey,
-        formatAppSize: input.formatAppSize,
         sizeOf: input.sizeOf,
         sortBy: input.sortBy,
         selectApp: input.selectApp,
@@ -270,7 +268,6 @@ export function useSoftwareController(input: SoftwareControllerInput): SoftwareP
       input.scanTarget,
       input.multi,
       input.uninstallingKey,
-      input.formatAppSize,
       input.sizeOf,
       input.sortBy,
       input.selectApp,

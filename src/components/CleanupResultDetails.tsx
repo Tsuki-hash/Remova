@@ -212,6 +212,7 @@ export function CleanupResultDetails({
   onRescan,
   retryBusy,
   lockRoot,
+  expandSkipped = false,
 }: {
   items: ItemDetail[];
   /** Rendered as a heading; omit inside a container that already labels the block. */
@@ -223,6 +224,7 @@ export function CleanupResultDetails({
   retryBusy?: boolean;
   /** Install directory that bounds which locking processes may be ended. */
   lockRoot?: string;
+  expandSkipped?: boolean;
 }) {
   const L = t();
   const groups = [["failed", L.reportFailed], ["delayed", L.reportPendingReboot], ["skipped", L.reportSkipped],
@@ -233,7 +235,8 @@ export function CleanupResultDetails({
     {title && <h3 style={{ margin: "8px 0 0", fontSize: 13, fontWeight: 650, color: "var(--fg)" }}>{title}</h3>}
     {groups.map(([status, label]) => {
       const entries = items.filter(item => item.status === status);
-      return entries.length ? <ResultGroup key={status} label={label} items={entries} expanded={status === "failed"}
+      return entries.length ? <ResultGroup key={status} label={label} items={entries}
+        expanded={status === "failed" || (expandSkipped && status === "skipped")}
         onRetry={status === "failed" ? onRetry : undefined}
         onRescan={status === "failed" ? onRescan : undefined}
         retryBusy={retryBusy} lockRoot={lockRoot} /> : null;

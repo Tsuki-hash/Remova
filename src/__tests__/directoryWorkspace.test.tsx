@@ -14,6 +14,7 @@ vi.mock("../lib/api", () => ({
     cancelAssociationScan: vi.fn(async () => true),
     associationScanProgress: vi.fn(async () => null),
     inspectFolderReferences: vi.fn(),
+    pickReferenceFolder: vi.fn(),
     listLocalDrives: vi.fn(),
     listTopDirSizes: vi.fn(),
   },
@@ -113,4 +114,21 @@ it("shows only the completed sources after a cancelled check and clears them on 
   fireEvent.click(screen.getByRole("button", { name: L.folderInspectRun }));
   expect(await screen.findByText(L.folderInspectEmpty)).toBeTruthy();
   expect(screen.queryByText(/已查完|Completed sources/)).toBeNull();
+});
+
+it("keeps the current folder when the picker is cancelled and checks the chosen folder", async () => {
+  const L = t();
+  const path = "D:\\Apps\\Chosen";
+  vi.mocked(api.pickReferenceFolder).mockResolvedValueOnce(null).mockResolvedValueOnce(path);
+  vi.mocked(api.inspectFolderReferences).mockResolvedValue({ references: [], incomplete: [], omitted: 0 });
+  render(<Fixture radar={false} path={app.install_location} />);
+  await screen.findByText(L.folderInspectEmpty);
+  const choose = screen.getByRole<HTMLButtonElement>("button", { name: L.folderInspectChoose });
+  await act(async () => fireEvent.click(choose));
+  expect(choose.disabled).toBe(false);
+  expect(api.inspectFolderReferences).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole<HTMLInputElement>("textbox", { name: L.folderInspectPath }).value).toBe(app.install_location);
+  fireEvent.click(choose);
+  await waitFor(() => expect(api.inspectFolderReferences).toHaveBeenLastCalledWith(path, 4));
+  expect(screen.getByRole<HTMLInputElement>("textbox", { name: L.folderInspectPath }).value).toBe(path);
 });

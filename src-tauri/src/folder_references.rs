@@ -64,6 +64,64 @@ fn contains(root: &str, value: &str) -> bool {
             .is_some_and(|tail| tail.starts_with('\\'))
 }
 
+#[cfg(windows)]
+pub(crate) fn pick_folder(owner: isize) -> Result<Option<String>, String> {
+    use windows::core::HRESULT;
+    use windows::Win32::Foundation::{ERROR_CANCELLED, HWND};
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_INPROC_SERVER,
+        COINIT_APARTMENTTHREADED,
+    };
+    use windows::Win32::UI::Shell::{
+        FileOpenDialog, IFileOpenDialog, FOS_DONTADDTORECENT, FOS_FORCEFILESYSTEM, FOS_NOCHANGEDIR,
+        FOS_PATHMUSTEXIST, FOS_PICKFOLDERS, SIGDN_FILESYSPATH,
+    };
+
+    const PICK_FAILED: &str = "folder:picker_unavailable";
+    static ACTIVE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _active = ACTIVE.try_lock().map_err(|_| PICK_FAILED)?;
+    struct Apartment;
+    impl Drop for Apartment {
+        fn drop(&mut self) {
+            unsafe { CoUninitialize() };
+        }
+    }
+
+    unsafe {
+        CoInitializeEx(None, COINIT_APARTMENTTHREADED)
+            .ok()
+            .map_err(|_| PICK_FAILED)?;
+        let _apartment = Apartment;
+        let dialog: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER)
+            .map_err(|_| PICK_FAILED)?;
+        let options = dialog.GetOptions().map_err(|_| PICK_FAILED)?;
+        dialog
+            .SetOptions(
+                options
+                    | FOS_PICKFOLDERS
+                    | FOS_FORCEFILESYSTEM
+                    | FOS_PATHMUSTEXIST
+                    | FOS_NOCHANGEDIR
+                    | FOS_DONTADDTORECENT,
+            )
+            .map_err(|_| PICK_FAILED)?;
+        match dialog.Show(HWND(owner as *mut std::ffi::c_void)) {
+            Ok(()) => {}
+            Err(error) if error.code() == HRESULT::from_win32(ERROR_CANCELLED.0) => {
+                return Ok(None)
+            }
+            Err(_) => return Err(PICK_FAILED.into()),
+        }
+        let item = dialog.GetResult().map_err(|_| PICK_FAILED)?;
+        let raw = item
+            .GetDisplayName(SIGDN_FILESYSPATH)
+            .map_err(|_| PICK_FAILED)?;
+        let path = raw.to_string();
+        CoTaskMemFree(Some(raw.0.cast()));
+        Ok(Some(path.map_err(|_| PICK_FAILED)?))
+    }
+}
+
 pub(crate) fn inspect_scoped(path: &str, scan_id: u32) -> Result<InspectionOutcome, String> {
     let mut checked = Vec::new();
     match scan_task::run_scoped(scan_id, "folder-references", || inspect(path, &mut checked)) {

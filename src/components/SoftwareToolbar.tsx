@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type Ref } from "react";
 import { Deco } from "./ui/Glyph";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
-import type { CategoryId } from "../lib/categories";
+import type { CategoryId, SortCol, SortSoftware } from "../lib/categories";
 
 export type { CategoryId };
 
@@ -11,6 +11,9 @@ export function SoftwareToolbar({
   searchRef,
   q,
   category,
+  sortCol,
+  sortDesc,
+  sortBy,
   estimating,
   scanning,
   aiEnabled,
@@ -24,6 +27,9 @@ export function SoftwareToolbar({
   searchRef?: Ref<HTMLInputElement>;
   q: string;
   category: CategoryId;
+  sortCol: SortCol;
+  sortDesc: boolean;
+  sortBy: SortSoftware;
   estimating: boolean;
   scanning: boolean;
   aiEnabled: boolean;
@@ -35,6 +41,16 @@ export function SoftwareToolbar({
   onToggleSmartFilter: () => void;
 }) {
   const L = t();
+  const sortOptions = [
+    [null, false, L.softwareSortDefault],
+    ["name", false, L.softwareSortName],
+    ["name", true, L.softwareSortNameReverse],
+    ["size", true, L.softwareSortSize],
+    ["size", false, L.softwareSortSizeReverse],
+    ["recommend", false, L.softwareSortRecommend],
+    ["recommend", true, L.softwareSortRecommendReverse],
+  ] as const;
+  const currentSort = sortOptions.findIndex(([column, descending]) => column === sortCol && descending === sortDesc);
   const [guideOpen, setGuideOpen] = useState(false);
   const guideRef = useRef<HTMLDivElement | null>(null);
 
@@ -137,6 +153,17 @@ export function SoftwareToolbar({
           </button>
         ))}
       </div>
+      <select
+        aria-label={L.softwareSort}
+        style={{ ...css.input, minWidth: 0, maxWidth: "100%", height: 34, flex: "0 1 auto" }}
+        value={Math.max(0, currentSort)}
+        onChange={event => {
+          const choice = sortOptions[Number(event.currentTarget.value)];
+          if (choice) sortBy(choice[0], choice[1]);
+        }}
+      >
+        {sortOptions.map(([, , label], index) => <option key={label} value={index}>{label}</option>)}
+      </select>
       <div ref={guideRef} style={{ position: "relative", flexShrink: 0 }}>
         <button
           type="button"
