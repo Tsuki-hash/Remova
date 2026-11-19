@@ -10,6 +10,9 @@ import { InstalledAppIcon } from "./AppIcon";
 import { prettyAppName, sourceLabel } from "../lib/format";
 import { buildLinkedBuckets, linkedBucketIcon } from "../lib/linkedItems";
 import { appKey, scanMatchesApp } from "../lib/appKey";
+import { cleanupItemKey } from "../lib/cleanupPlan";
+import { bucketItem, isKeepItem, leftoverReasonLine } from "../lib/decision";
+import { evidenceText } from "../lib/evidenceText";
 import { ToolGlyph } from "./ToolIcons";
 import type { LinkedBucketId } from "../lib/linkedItems";
 import "./SoftwareDetails.css";
@@ -52,11 +55,19 @@ export function AppDetailPanel({
   const hasCmd = Boolean((app.quiet_uninstall_string || app.uninstall_string || "").trim());
   const matchingScan = scan && scanMatchesApp(scan, app) ? scan : null;
   const buckets = matchingScan ? buildLinkedBuckets(matchingScan.items, app) : [];
+  const priorityItems = matchingScan ? [
+    ...matchingScan.items.filter(isKeepItem),
+    ...matchingScan.items.filter(item => bucketItem(item) === "suggest"),
+  ].slice(0, 2) : [];
+  const hasPriority = priorityItems.length > 0;
+  const source = sourceLabel(app.source, L);
+  const subtitle = [app.publisher || "—", app.version || "—", ...(hasPriority ? [source] : [])].join(" · ");
   const measured = matchingScan?.items.find(item => item.kind === "dir" &&
     item.evidence?.some(evidence => evidence.code === "install_location") && item.size_kb != null);
   const measuredSize = measured?.size_kb != null
     ? measured.size_capped ? L.detailSizeFloor(formatSize(measured.size_kb)) : formatSize(measured.size_kb)
     : app.estimated_size_kb <= 0 && sizeText !== "—" ? sizeText : null;
+  const measuredPath = measuredSize ? measured?.path || app.install_location : "";
   const registeredSize = app.estimated_size_kb > 0 ? formatSize(app.estimated_size_kb) : "—";
 
   const closeMenu = (restoreFocus: boolean) => {
@@ -86,29 +97,52 @@ export function AppDetailPanel({
   ];
 
   return (
-    <aside style={{ ...css.panelShell, borderRadius: 12 }} className="software-detail" aria-label={name}>
-      <div style={{ ...css.panelHeader, padding: "20px 18px", gap: 12 }}>
+    <aside style={{ ...css.panelShell, borderRadius: 12 }} className="software-detail" aria-label={name}
+      data-priority={hasPriority || undefined}>
+      <div style={{ ...css.panelHeader, padding: hasPriority ? "6px 14px" : "20px 18px" }}>
         <InstalledAppIcon app={app} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 650, fontSize: 16, lineHeight: 1.4, overflowWrap: "anywhere" }}>{name}</div>
-          <div className="ell" style={{ ...css.muted, marginTop: 5, fontSize: 11.5 }} title={`${app.publisher} · ${app.version}`}>
-            {app.publisher || "—"} · {app.version || "—"}
+          <div className="ell" style={{ ...css.muted, marginTop: hasPriority ? 2 : 5, fontSize: 11.5 }} title={subtitle}>
+            {subtitle}
           </div>
         </div>
         {onClose && <BackButton className="software-detail-back" onClick={onClose} label={scan ? L.navBack : L.returnSoftwareList} />}
       </div>
 
-      <div style={{ ...css.panelBody, padding: "18px" }}>
+      <div style={{ ...css.panelBody, padding: hasPriority ? "8px 14px" : "18px" }}>
         <div className="software-detail-capacity">
-          <div>
+          <div className="software-detail-metrics">
             <span className="software-detail-caption">{measuredSize ? L.detailMeasuredSize : L.detailRegisteredSize}</span>
             <strong className="software-detail-size">{measuredSize ?? registeredSize}</strong>
             <span className="software-detail-caption">
               {measuredSize ? L.detailRegisteredSize : L.detailMeasuredSize} {measuredSize ? registeredSize : L.detailUnmeasured}
             </span>
+            {measuredPath && <details className="software-detail-scope">
+              <summary>{L.detailMeasurementScope}</summary>
+              <code className="software-detail-path">{measuredPath}</code>
+            </details>}
           </div>
-          <span className="software-detail-source" title={`${L.detailSource}: ${sourceLabel(app.source, L)}`}>{sourceLabel(app.source, L)}</span>
+          {!hasPriority && <span className="software-detail-source" title={`${L.detailSource}: ${source}`}>{source}</span>}
         </div>
+        {hasPriority && <section className="software-detail-priority" aria-label={L.detailPriorityItems}>
+          <h3 className="software-detail-section">{L.detailPriorityItems}</h3>
+          {priorityItems.map(item => (
+            <details key={cleanupItemKey(item)}>
+              <summary>
+                <span>{item.path.replace(/[\\/]+$/, "").split(/[\\/]/).at(-1) || item.path}</span>
+                <span className="software-detail-priority-reason">{leftoverReasonLine(item, L)}</span>
+              </summary>
+              <code className="software-detail-path">{item.path}</code>
+              {item.evidence.length > 0 && <ul>
+                {item.evidence.map((raw, index) => {
+                  const evidence = evidenceText(raw);
+                  return <li key={`${raw.code}-${index}`}>{evidence.label}{evidence.detail && ` · ${evidence.detail}`}</li>;
+                })}
+              </ul>}
+            </details>
+          ))}
+        </section>}
         <div className="software-detail-actions">
           <button
             style={{

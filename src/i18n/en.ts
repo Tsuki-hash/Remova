@@ -634,6 +634,8 @@ export const dict: EnDict = {
     detailMeasuredSize: "Measured install folder",
     detailUnmeasured: "Not measured",
     detailSizeFloor: (size: string) => `At least ${size}`,
+    detailMeasurementScope: "View measurement scope",
+    detailPriorityItems: "Associations to review first",
     diskRadarHint: "See which folders use disk space",
     toolcacheTitle: "Tool cache cleanup",
     toolcacheSharedTitle: "Shared cache folder",

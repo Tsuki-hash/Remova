@@ -636,6 +636,8 @@ export const dict = {
     detailMeasuredSize: "安装目录实测",
     detailUnmeasured: "尚未测量",
     detailSizeFloor: (size: string) => `至少 ${size}`,
+    detailMeasurementScope: "查看测量范围",
+    detailPriorityItems: "优先核对的关联项",
     diskRadarHint: "查看哪些文件夹占用空间",
     toolcacheTitle: "专项缓存清理",
     toolcacheSharedTitle: "共享缓存目录",
