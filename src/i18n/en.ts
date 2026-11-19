@@ -1254,6 +1254,7 @@ export const dict: EnDict = {
     backendBackupFailed: "Backup failed; cleanup was stopped",
     backendBackupNamedStreams: "This item contains named data streams that Remova cannot safely back up or restore.",
     backendBackupSourceUnverified: "Skipped because the source could not be matched to its verified backup.",
+    backendBackupCopyUnverified: "Kept the original because its backup copy could not be verified.",
     backendDryRun: "Preview only; no uninstall or deletion was performed",
     backendPathRemoved: "PATH entry removed",
     backendPathScopeKept: "PATH changed or was outside the verified backup scope. The affected entries were kept.",

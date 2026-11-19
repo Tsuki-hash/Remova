@@ -81,6 +81,7 @@ export function backendText(raw: string, context: "cleanup" | "scan" | "idle" = 
   if (Object.hasOwn(exact, raw)) return exact[raw]!;
   if (isNamedStreamRefusal(raw)) return L.backendBackupNamedStreams;
   if (raw.startsWith("backup source could not be verified: ")) return L.backendBackupSourceUnverified;
+  if (raw.startsWith("backup copy could not be verified: ")) return L.backendBackupCopyUnverified;
   if (uninstallNeedsRestart(raw)) return L.backendRebootRequired;
   if (
     raw === "official uninstaller initiated reboot; residual cleanup skipped" ||

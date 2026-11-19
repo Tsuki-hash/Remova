@@ -214,6 +214,21 @@ it("keeps the cleanup counts, skipped reason and return visible on the report", 
   expect(onDismiss).toHaveBeenCalledOnce();
 });
 
+it.each(["zh", "en"] as const)("explains that unverified backup copies preserve the original in %s", lang => {
+  setLang(lang);
+  const report: FullCleanupReport = { app_name: "fixture", dry_run: false, backup_dir: "C:\\Backups\\fixture",
+    backup_verified: false, uninstall_ok: false, uninstall_message: "", deleted: 1, failed: 0, skipped: 1,
+    aborted: false, restore_point_ok: false, restore_point_msg: "", errors: [],
+    item_details: [{ path: "C:\\Fixture\\kept.bin", kind: "file", status: "skipped",
+      message: "backup copy could not be verified: backup payload is missing recorded entries" }] };
+  render(<ReportPanel report={report} aiEnabled={false} aiReportBusy={false} aiReportNote={null}
+    verifyRows={null} onDismiss={() => {}} onRegenerate={() => {}} />);
+  expect(screen.getByRole("note").textContent).toBe(t().unverifiedBackupThisRun);
+  expect(screen.queryByRole("button", { name: `${t().restorePreviewTitle}: fixture` })).toBeNull();
+  expect(screen.getByText(lang === "zh" ? "备份副本无法验证，已保留原项目。" :
+    "Kept the original because its backup copy could not be verified.").closest("details")?.open).toBe(true);
+});
+
 it("offers a post-cleanup rescan button and honors the busy state", () => {
   const onRescan = vi.fn();
   const report: FullCleanupReport = { app_name: "sample", dry_run: false, backup_dir: "",

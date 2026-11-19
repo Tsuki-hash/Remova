@@ -1235,6 +1235,7 @@ export const dict = {
     backendBackupFailed: "备份失败，已停止清理",
     backendBackupNamedStreams: "该项目含有命名数据流，Remova 无法安全备份或还原。",
     backendBackupSourceUnverified: "无法确认源项目与已验证的备份一致，已跳过。",
+    backendBackupCopyUnverified: "备份副本无法验证，已保留原项目。",
     backendDryRun: "仅预览，未执行卸载或删除",
     backendPathRemoved: "已移除 PATH 条目",
     backendPathScopeKept: "PATH 已变更或超出已验证的备份范围，相关条目已保留。",
