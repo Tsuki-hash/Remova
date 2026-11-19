@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { formatSize, t } from "../i18n";
 import { api } from "../lib/api";
@@ -15,6 +15,18 @@ import { BackButton } from "./ui/BackButton";
 import "./DirectoryWorkspace.css";
 
 export type FolderInspection = { path: string; measurement?: DirSizeRow; returnToRadar?: boolean };
+type ReturnPosition = { opener: HTMLButtonElement; scroll: { element: HTMLElement; top: number }[] };
+
+function capturePosition(opener: HTMLButtonElement, dialog: HTMLDivElement | null): ReturnPosition {
+  const scroll: ReturnPosition["scroll"] = [];
+  for (let element = opener.parentElement; element; element = element.parentElement) {
+    if (element === dialog || /^(auto|scroll)$/.test(getComputedStyle(element).overflowY)) {
+      scroll.push({ element, top: element.scrollTop });
+    }
+    if (element === dialog) break;
+  }
+  return { opener, scroll };
+}
 
 export function DirectoryWorkspace({
   radar, inspection, apps, onInspect, onBack, onClose, onOpenSoftware,
@@ -31,27 +43,34 @@ export function DirectoryWorkspace({
   const title = useId();
   const dialog = useRef<HTMLDivElement>(null);
   const backButton = useRef<HTMLButtonElement>(null);
-  const restoreEvidenceFocus = useRef<HTMLButtonElement | null>(null);
+  const radarPosition = useRef<ReturnPosition | null>(null);
+  const referencePosition = useRef<ReturnPosition | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [opened, setOpened] = useState<{ inspection: FolderInspection; key: string; opener: HTMLButtonElement } | null>(null);
+  const [opened, setOpened] = useState<({ inspection: FolderInspection; key: string } & ReturnPosition) | null>(null);
   const app = opened && opened.inspection === inspection
     ? apps.find(item => appKey(item) === opened.key)
     : undefined;
   const back = () => {
     if (app && opened) {
-      restoreEvidenceFocus.current = opened.opener;
+      referencePosition.current = opened;
       setOpened(null);
     }
     else if (inspection && radar) onBack();
     else onClose();
   };
   useDialogFocus(true, dialog, dialogLayer.overview, back);
-  useEffect(() => {
-    const opener = restoreEvidenceFocus.current;
-    restoreEvidenceFocus.current = null;
-    if (opener?.isConnected) opener.focus({ preventScroll: true });
-    else backButton.current?.focus();
-  }, [inspection, app]);
+  useLayoutEffect(() => {
+    const position = referencePosition.current ?? (!inspection && radar ? radarPosition.current : null);
+    referencePosition.current = null;
+    if (!inspection) radarPosition.current = null;
+    if (position?.opener.isConnected) {
+      for (const { element, top } of position.scroll) element.scrollTo({ top, behavior: "instant" });
+      position.opener.focus({ preventScroll: true });
+    } else {
+      if (dialog.current) dialog.current.scrollTop = 0;
+      backButton.current?.focus();
+    }
+  }, [inspection, app, radar]);
 
   const openPath = (path: string) => {
     setError(null);
@@ -67,10 +86,13 @@ export function DirectoryWorkspace({
         </header>
         {error && <p role="alert" className="folder-reference-incomplete">{error}</p>}
         {radar && (
-          <div hidden={Boolean(inspection)}>
+          <div className="directory-radar-view" hidden={Boolean(inspection)}>
             <DiskRadarPanel
               onError={setError}
-              onInspect={row => onInspect({ path: row?.path ?? "", measurement: row })}
+              onInspect={(row, opener) => {
+                radarPosition.current = capturePosition(opener, dialog.current);
+                onInspect({ path: row?.path ?? "", measurement: row });
+              }}
             />
           </div>
         )}
@@ -79,7 +101,7 @@ export function DirectoryWorkspace({
             <FolderReferencePanel key={inspection.path} inspection={inspection} apps={apps}
               onInspect={path => onInspect({ path, returnToRadar: inspection.returnToRadar })}
               onOpenPath={openPath}
-              onApp={(item, opener) => setOpened({ inspection, key: appKey(item), opener })}
+              onApp={(item, opener) => setOpened({ inspection, key: appKey(item), ...capturePosition(opener, dialog.current) })}
             />
           </div>
         )}

@@ -12,7 +12,7 @@ export function DiskRadarComparison({ scope, rows, busy, onInspect }: {
   scope: RadarScope | null;
   rows: DirSizeRow[] | null;
   busy: boolean;
-  onInspect?: (row: DirSizeRow) => void;
+  onInspect?: (row: DirSizeRow, opener: HTMLButtonElement) => void;
 }) {
   const L = t();
   const [saved, setSaved] = useState(() => {
@@ -66,7 +66,7 @@ export function DiskRadarComparison({ scope, rows, busy, onInspect }: {
               ? change.before === undefined ? L.diskRadarNewRow : change.after === undefined ? L.diskRadarMissingRow : L.diskRadarCappedRow
               : change.delta === 0 ? L.diskRadarUnchanged : `${change.delta > 0 ? "+" : "−"}${formatSize(Math.abs(change.delta))}`}</span>
             {change.delta !== undefined && change.delta > 0 && change.row && onInspect && (
-              <button type="button" style={css.btnGhost} onClick={() => onInspect(change.row!)}>{L.folderInspectAction}</button>
+              <button type="button" style={css.btnGhost} onClick={event => onInspect(change.row!, event.currentTarget)}>{L.folderInspectAction}</button>
             )}
           </li>)}
         </ul>

@@ -36,7 +36,7 @@ export function DiskRadarPanel({
 }: {
   onClose?: () => void;
   onError: (msg: string) => void;
-  onInspect?: (row?: DirSizeRow) => void;
+  onInspect?: (row: DirSizeRow | undefined, opener: HTMLButtonElement) => void;
 }) {
   const L = t();
   const [rows, setRows] = useState<DirSizeRow[] | null>(null);
@@ -150,7 +150,7 @@ export function DiskRadarPanel({
         <h2>{L.diskRadarTitle}</h2>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           {onInspect && (
-            <button type="button" style={css.btnGhost} onClick={() => onInspect()}>
+            <button type="button" style={css.btnGhost} onClick={event => onInspect(undefined, event.currentTarget)}>
               {L.folderInspectTitle}
             </button>
           )}
@@ -306,7 +306,7 @@ export function DiskRadarPanel({
               {L.detailShow}
             </button>
             {onInspect && (
-              <button type="button" style={css.btnGhost} onClick={() => onInspect(r)}>
+              <button type="button" style={css.btnGhost} onClick={event => onInspect(r, event.currentTarget)}>
                 {L.folderInspectAction}
               </button>
             )}

@@ -44,7 +44,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-it("keeps the inspected references and disk radar when returning from app details", async () => {
+it("restores the reference trigger and the original radar focus and scroll position", async () => {
   const L = t();
   vi.mocked(api.listLocalDrives).mockResolvedValue([{ letter: "D", is_system: true, total_gb: 10, free_gb: 2 }]);
   vi.mocked(api.listTopDirSizes).mockResolvedValue([{
@@ -59,22 +59,36 @@ it("keeps the inspected references and disk radar when returning from app detail
     omitted: 0,
   });
   render(<Fixture />);
-  fireEvent.click(await screen.findByRole("button", { name: L.folderInspectAction }));
+  const radarAction = await screen.findByRole("button", { name: L.folderInspectAction });
+  const radarDialog = screen.getByRole("dialog", { name: L.diskRadarShortcut });
+  radarDialog.scrollTo = (options?: ScrollToOptions | number, y?: number) => {
+    radarDialog.scrollTop = (typeof options === "object" ? options.top : y) ?? 0;
+  };
+  radarAction.focus();
+  radarDialog.scrollTop = 240;
+  fireEvent.click(radarAction);
   const inspected = await screen.findByRole("dialog", { name: L.folderInspectTitle });
+  inspected.scrollTop = 0;
   expect(await within(inspected).findByText(L.folderInspectPartial(L.folderInspectShortcut))).toBeTruthy();
   expect(within(inspected).getByText("D:\\Apps\\Editor\\updater.exe")).toBeTruthy();
   expect(api.inspectFolderReferences).toHaveBeenCalledWith(app.install_location, 4);
   const openDetail = within(inspected).getByRole("button", { name: L.folderInspectShowApp });
+  openDetail.focus();
+  inspected.scrollTop = 135;
   fireEvent.click(openDetail);
   const detail = screen.getByRole("dialog", { name: L.folderInspectShowApp });
+  expect(detail.scrollTop).toBe(0);
   expect(within(detail).getByRole("button", { name: L.detailInspect })).toBeTruthy();
   expect(within(detail).getByRole("button", { name: L.detailUninstall })).toBeTruthy();
   fireEvent.click(within(detail).getByRole("button", { name: L.folderInspectBack }));
   expect(document.activeElement).toBe(openDetail);
+  expect(inspected.scrollTop).toBe(135);
   expect(screen.getByText("D:\\Apps\\Editor\\updater.exe")).toBeTruthy();
   expect(api.inspectFolderReferences).toHaveBeenCalledTimes(1);
   fireEvent.click(screen.getByRole("button", { name: L.folderInspectRadar }));
-  expect(screen.getByRole("button", { name: L.folderInspectAction })).toBeTruthy();
+  expect(screen.getByRole("button", { name: L.folderInspectAction })).toBe(radarAction);
+  expect(document.activeElement).toBe(radarAction);
+  expect(radarDialog.scrollTop).toBe(240);
   expect(api.listTopDirSizes).toHaveBeenCalledTimes(1);
 });
 

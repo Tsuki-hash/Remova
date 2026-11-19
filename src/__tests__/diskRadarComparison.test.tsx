@@ -36,8 +36,9 @@ it("can save, reopen, inspect a growing directory and clear the saved measuremen
   fireEvent.click(screen.getByText(L.diskRadarCompareDetails(2)));
   expect(screen.getByText("+80 KB")).toBeTruthy();
   expect(screen.getByText("−25 KB")).toBeTruthy();
-  fireEvent.click(within(screen.getByRole("region", { name: L.diskRadarCompareTitle })).getByRole("button", { name: L.folderInspectAction }));
-  expect(inspect).toHaveBeenCalledWith(growing);
+  const inspectGrowth = within(screen.getByRole("region", { name: L.diskRadarCompareTitle })).getByRole("button", { name: L.folderInspectAction });
+  fireEvent.click(inspectGrowth);
+  expect(inspect).toHaveBeenCalledWith(growing, inspectGrowth);
   fireEvent.click(screen.getByRole("button", { name: L.diskRadarClearSnapshot }));
   expect(screen.getByRole("button", { name: L.diskRadarSaveSnapshot })).toBeTruthy();
 });
