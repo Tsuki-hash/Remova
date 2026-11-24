@@ -1,14 +1,15 @@
 import { BackButton } from "./ui/BackButton";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import { api } from "../lib/api";
 import { LocalItemIcon } from "./AppIcon";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
 import { backendErrorText } from "../lib/backendText";
-import { needsAdminRights, offerElevatedRestart } from "../lib/elevate";
+import { isKnownNonElevated, needsAdminRights, offerElevatedRestart } from "../lib/elevate";
 import { toast } from "../lib/toast";
 import { requestConfirmEx } from "../lib/confirm";
+import { useRequestSeq } from "../hooks/useRequestSeq";
 import type { FirewallRule, ItemDetail, ScanCompleteness } from "../types";
 import { ScanCompletenessNotice } from "./ScanCompletenessNotice";
 import { CleanupResultDetails } from "./CleanupResultDetails";
@@ -42,6 +43,10 @@ export function FirewallRulesPanel({
   });
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const { next: nextRemoval, isCurrent: isCurrentRemoval, invalidate: invalidateRemoval } = useRequestSeq();
+  const hintId = useId();
+  useEffect(() => invalidateRemoval, [invalidateRemoval]);
   // A failed scan ends the loading state and stays visible with a retry; the
   // parent toast alone left this panel showing "loading" indefinitely.
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -79,31 +84,40 @@ export function FirewallRulesPanel({
   };
 
   const removeSelected = async () => {
-    if (busy || selected.size === 0) return;
+    if (busy || removing || selected.size === 0) return;
     const selections = (rows ?? [])
       .filter(row => selected.has(row.value_name))
       .map(({ value_name, revision }) => ({ value_name, revision }));
     if (!selections.length) return;
-    const { ok } = await requestConfirmEx({
-      title: L.firewallDeleteSelected,
-      message: L.firewallDeleteConfirm(selections.length),
-      confirmLabel: L.firewallDeleteSelected,
-      danger: true,
-    });
-    if (!ok) return;
-    setBusy(true);
+    const id = nextRemoval();
+    setRemoving(true);
     try {
-      const report = await api.deleteFirewallRules(selections);
-      setLastResult({
-        failed: report.failed.map(name => ({
-          path: name,
-          kind: "registry",
-          status: "failed",
-          message: L.firewallDeletePartial(report.failed.length),
-        })),
-        removed: report.removed,
-        backupDir: report.backup_dir,
+      const needsRestart = await isKnownNonElevated();
+      if (!isCurrentRemoval(id)) return;
+      if (needsRestart) {
+        await offerElevatedRestart(L.firewallNeedAdmin);
+        return;
+      }
+      const { ok } = await requestConfirmEx({
+        title: L.firewallDeleteSelected,
+        message: L.firewallDeleteConfirm(selections.length),
+        confirmLabel: L.firewallDeleteSelected,
+        danger: true,
       });
+      if (!ok || !isCurrentRemoval(id)) return;
+      const report = await api.deleteFirewallRules(selections);
+      if (isCurrentRemoval(id)) {
+        setLastResult({
+          failed: report.failed.map(name => ({
+            path: name,
+            kind: "registry",
+            status: "failed",
+            message: L.firewallDeletePartial(report.failed.length),
+          })),
+          removed: report.removed,
+          backupDir: report.backup_dir,
+        });
+      }
       if (report.failed.length > 0) {
         toast.error(L.firewallDeletePartial(report.failed.length), {
           detail: report.backup_dir,
@@ -111,17 +125,15 @@ export function FirewallRulesPanel({
       } else {
         toast.success(L.firewallDeleteOk, { detail: report.backup_dir });
       }
-      await scan();
+      if (isCurrentRemoval(id)) await scan();
     } catch (e) {
-      // Detect the raw refusal — formatError would already localize it away.
-      const raw = typeof e === "string" ? e : e instanceof Error ? e.message : String(e);
-      if (needsAdminRights(raw)) {
+      if (isCurrentRemoval(id) && needsAdminRights(e)) {
         await offerElevatedRestart(L.firewallNeedAdmin);
       } else {
         toast.error(L.firewallDeleteFailed(backendErrorText(formatError(e))));
       }
     } finally {
-      setBusy(false);
+      if (isCurrentRemoval(id)) setRemoving(false);
     }
   };
 
@@ -130,12 +142,12 @@ export function FirewallRulesPanel({
       <div className="remova-tool-heading">
         <h2>{L.firewallTitle}</h2>
         <div className="remova-tool-actions">
-          <button style={{ ...css.btnGhost, height: 30 }} disabled={busy} onClick={() => void scan()}>
+          <button style={{ ...css.btnGhost, height: 30 }} disabled={busy || removing} onClick={() => void scan()}>
             {L.manageReload}
           </button>
           <button
             style={{ ...css.btnGhost, height: 30 }}
-            disabled={busy || (rows?.length ?? 0) === 0}
+            disabled={busy || removing || (rows?.length ?? 0) === 0}
             onClick={() =>
               setSelected((prev) =>
                 prev.size === rows?.length
@@ -152,9 +164,11 @@ export function FirewallRulesPanel({
               height: 30,
               background: "var(--danger-text)",
               color: "var(--surface)",
-              opacity: busy || selected.size === 0 ? 0.5 : 1,
+              opacity: busy || removing || selected.size === 0 ? 0.5 : 1,
             }}
             disabled={busy || selected.size === 0}
+            aria-disabled={removing || undefined}
+            aria-describedby={hintId}
             onClick={() => void removeSelected()}
           >
             {L.firewallDeleteSelected} ({selected.size})
@@ -162,7 +176,7 @@ export function FirewallRulesPanel({
           <BackButton onClick={onClose} />
         </div>
       </div>
-      <p className="remova-tool-note">{L.firewallHint}</p>
+      <p id={hintId} className="remova-tool-note">{L.firewallHint}</p>
       <ScanCompletenessNotice completeness={completeness} />
       {lastResult && (
         <div style={{ marginTop: 10, padding: 10, border: "1px solid var(--border)", borderRadius: 8 }}>
@@ -181,7 +195,7 @@ export function FirewallRulesPanel({
       {loadError ? (
         <div role="alert" style={{ ...css.muted, padding: "10px 0", color: "var(--danger)" }}>
           {loadError}{" "}
-          <button style={{ ...css.btnGhost, height: 26 }} onClick={() => void scan()}>
+          <button style={{ ...css.btnGhost, height: 26 }} disabled={busy || removing} onClick={() => void scan()}>
             {L.manageReload}
           </button>
         </div>
@@ -210,7 +224,7 @@ export function FirewallRulesPanel({
               <input
                 type="checkbox"
                 checked={selected.has(row.value_name)}
-                disabled={busy}
+                disabled={busy || removing}
                 onChange={(e) => toggle(row.value_name, e.target.checked)}
               />
               <LocalItemIcon path={row.app_path} />

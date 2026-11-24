@@ -5,7 +5,7 @@ import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
 import { backendErrorText } from "../lib/backendText";
-import { needsAdminRights, offerElevatedRestart } from "../lib/elevate";
+import { isKnownNonElevated, needsAdminRights, offerElevatedRestart } from "../lib/elevate";
 import { toast } from "../lib/toast";
 import { requestConfirmEx } from "../lib/confirm";
 import { ToolGlyph } from "./ToolIcons";
@@ -198,6 +198,7 @@ export function DiskOverviewPanel({
   const cacheItems = regenScan.data?.items.filter(item => !focused || item.path === focusCachePath) ?? [];
   const [regenSel, setRegenSel] = useState<Set<string>>(new Set());
   const [regenBusy, setRegenBusy] = useState(false);
+  const [dismChecking, setDismChecking] = useState(false);
   const [dismBusy, setDismBusy] = useState(() => Boolean(scanComponentStore.pending()));
   const [dism, setDism] = useState<ComponentStoreAnalysis | null>(null);
   const { next: nextDism, isCurrent: isCurrentDism, invalidate: invalidateDism } = useRequestSeq();
@@ -213,23 +214,37 @@ export function DiskOverviewPanel({
   const pending = scans.filter(scan => scan.pending);
   const cleanupPending = triageScan.pending || regenScan.pending;
 
-  const receiveDism = useCallback(async (request: Promise<ComponentStoreAnalysis>) => {
+  const receiveDism = useCallback(async (request?: Promise<ComponentStoreAnalysis>) => {
     const id = nextDism();
     try {
+      if (!request) {
+        const needsRestart = await isKnownNonElevated();
+        if (!isCurrentDism(id)) return;
+        if (needsRestart) {
+          await offerElevatedRestart(t().diskOverviewElevateHint);
+          return;
+        }
+        setDismChecking(false);
+        setDismBusy(true);
+        request = scanComponentStore();
+      }
       const result = await request;
       if (isCurrentDism(id)) setDism(result);
     } catch (e) {
       if (!isCurrentDism(id)) return;
-      const msg = formatError(e);
       const strings = t();
-      if (needsAdminRights(msg)) {
+      if (needsAdminRights(e)) {
         await offerElevatedRestart(strings.diskOverviewElevateHint);
       } else {
+        const msg = formatError(e);
         toast.error(msg === "dism:timeout" ? strings.diskOverviewDismTimeout
           : msg === "dism:output_limit" ? strings.diskOverviewDismOutputLimit : msg);
       }
     } finally {
-      if (isCurrentDism(id)) setDismBusy(false);
+      if (isCurrentDism(id)) {
+        setDismChecking(false);
+        setDismBusy(false);
+      }
     }
   }, [isCurrentDism, nextDism]);
 
@@ -241,9 +256,9 @@ export function DiskOverviewPanel({
   }, [focused, invalidateDism, receiveDism]);
 
   const runDism = () => {
-    if (dismBusy) return;
-    setDismBusy(true);
-    void receiveDism(scanComponentStore());
+    if (dismChecking || dismBusy) return;
+    setDismChecking(true);
+    void receiveDism();
   };
 
   const toggleRegen = (path: string) => {
@@ -687,7 +702,7 @@ export function DiskOverviewPanel({
       {tab === "components" && (
         <div id="disk-overview-panel-components" role="tabpanel" aria-labelledby="disk-overview-tab-components" aria-label={L.diskOverviewTabComponents}>
           <div style={{ fontWeight: 600 }}>{L.diskOverviewWinSxs}</div>
-          <div style={{ ...css.muted, fontSize: 12, margin: "4px 0 6px" }}>{L.diskOverviewWinSxsHint}</div>
+          <div id="disk-overview-dism-hint" style={{ ...css.muted, fontSize: 12, margin: "4px 0 6px" }}>{L.diskOverviewWinSxsHint}</div>
           {dism && (
             <div role="status" style={{ marginBottom: 6 }}>
               {L.diskOverviewWinSxsResult(
@@ -700,8 +715,10 @@ export function DiskOverviewPanel({
           <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 6 }}>
             <button
               type="button"
-              style={{ ...css.btn, height: 32, opacity: dismBusy ? 0.5 : 1 }}
+              style={{ ...css.btn, height: 32, opacity: dismChecking || dismBusy ? 0.5 : 1 }}
               disabled={dismBusy}
+              aria-disabled={dismChecking || undefined}
+              aria-describedby="disk-overview-dism-hint"
               onClick={() => void runDism()}
             >
               {dismBusy ? L.diskOverviewAnalyzing : L.diskOverviewAnalyze}

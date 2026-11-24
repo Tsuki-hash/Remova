@@ -25,6 +25,8 @@ vi.mock("../lib/api", () => ({
     regenerableLayouts: vi.fn(),
     deleteRegenerableLayouts: vi.fn(),
     analyzeComponentStore: vi.fn(),
+    isElevated: vi.fn(),
+    elevateRestart: vi.fn(),
     openPath: vi.fn(),
   },
 }));
@@ -42,6 +44,8 @@ afterEach(() => {
     api.regenerableLayouts,
     api.deleteRegenerableLayouts,
     api.analyzeComponentStore,
+    api.isElevated,
+    api.elevateRestart,
     api.openPath,
   ]) {
     vi.mocked(mock).mockReset();
@@ -51,6 +55,7 @@ afterEach(() => {
 });
 
 function mockLoads() {
+  vi.mocked(api.isElevated).mockResolvedValue(true);
   vi.mocked(api.listLocalDrives).mockResolvedValue([
     { letter: "C:", free_gb: 50, total_gb: 200, is_system: true },
   ]);
@@ -199,7 +204,63 @@ it("runs the DISM analysis on demand and reports the verdict", async () => {
   fireEvent.click(screen.getByRole("button", { name: L.diskOverviewAnalyze }));
   await waitFor(() => expect(screen.getByRole("status").textContent).toContain(L.diskOverviewRecommendedYes));
   expect(api.analyzeComponentStore).toHaveBeenCalledTimes(1);
+  expect(requestConfirmEx).not.toHaveBeenCalled();
   expect(screen.getByRole("status").textContent).toContain(L.diskOverviewRecommendedYes);
+});
+
+it.each([false, true])("offers a restart before standard-mode analysis (accepted: %s)", async ok => {
+  mockLoads();
+  vi.mocked(api.isElevated).mockResolvedValue(false);
+  vi.mocked(requestConfirmEx).mockResolvedValueOnce({ ok, checked: false });
+  render(<DiskOverviewPanel onClose={vi.fn()} />);
+  const L = t();
+  await screen.findByText(L.diskOverviewJunctionSummary(2, 1));
+  expect(api.isElevated).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("tab", { name: L.diskOverviewTabComponents }));
+  const analyze = screen.getByRole("button", { name: L.diskOverviewAnalyze, description: L.diskOverviewWinSxsHint });
+  fireEvent.click(analyze);
+  await waitFor(() => expect(requestConfirmEx).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+    message: L.diskOverviewElevateHint,
+    confirmLabel: L.elevateAskOk,
+  })));
+  await waitFor(() => expect(analyze.getAttribute("aria-disabled")).toBeNull());
+  expect(api.elevateRestart).toHaveBeenCalledTimes(ok ? 1 : 0);
+  expect(api.analyzeComponentStore).not.toHaveBeenCalled();
+});
+
+it("keeps the backend admin refusal when the analysis preflight cannot read the token", async () => {
+  mockLoads();
+  vi.mocked(api.isElevated).mockRejectedValueOnce(new Error("token unavailable"));
+  vi.mocked(api.analyzeComponentStore).mockRejectedValueOnce(new Error(
+    "administrator privileges are required to analyze the component store",
+  ));
+  vi.mocked(requestConfirmEx).mockResolvedValueOnce({ ok: false, checked: false });
+  render(<DiskOverviewPanel onClose={vi.fn()} />);
+  const L = t();
+  fireEvent.click(screen.getByRole("tab", { name: L.diskOverviewTabComponents }));
+  fireEvent.click(screen.getByRole("button", { name: L.diskOverviewAnalyze }));
+  await waitFor(() => expect(requestConfirmEx).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+    message: L.diskOverviewElevateHint,
+  })));
+  expect(api.analyzeComponentStore).toHaveBeenCalledOnce();
+  expect(api.elevateRestart).not.toHaveBeenCalled();
+  expect(toast.error).not.toHaveBeenCalled();
+  expect(await screen.findByRole("button", { name: L.diskOverviewAnalyze })).toHaveProperty("disabled", false);
+});
+
+it("does not offer a restart after the disk overview is closed during preflight", async () => {
+  mockLoads();
+  let finish!: (value: boolean) => void;
+  vi.mocked(api.isElevated).mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+  const panel = render(<DiskOverviewPanel onClose={vi.fn()} />);
+  const L = t();
+  fireEvent.click(screen.getByRole("tab", { name: L.diskOverviewTabComponents }));
+  fireEvent.click(screen.getByRole("button", { name: L.diskOverviewAnalyze }));
+  expect(api.isElevated).toHaveBeenCalledOnce();
+  panel.unmount();
+  await act(async () => finish(false));
+  expect(requestConfirmEx).not.toHaveBeenCalled();
+  expect(api.analyzeComponentStore).not.toHaveBeenCalled();
 });
 
 it("rejoins a pending DISM analysis across four panel openings and can retry", async () => {
@@ -215,6 +276,7 @@ it("rejoins a pending DISM analysis across four panel openings and can retry", a
   };
   let panel = open();
   fireEvent.click(screen.getByRole("button", { name: L.diskOverviewAnalyze }));
+  await waitFor(() => expect(api.analyzeComponentStore).toHaveBeenCalledOnce());
   for (let i = 0; i < 3; i++) {
     panel.unmount();
     panel = open();

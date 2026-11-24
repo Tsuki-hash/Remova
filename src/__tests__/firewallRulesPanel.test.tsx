@@ -2,7 +2,7 @@
 // M3 (SOP §8-1): orphan firewall rules are listed unselected; deleting the
 // selected values goes through confirmation and a server-side re-scan.
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { FirewallRulesPanel } from "../components/FirewallRulesPanel";
 import { setLang, t } from "../i18n";
 import type { FirewallRule } from "../types";
@@ -21,6 +21,7 @@ const selection = ({ value_name, revision }: FirewallRule) => ({ value_name, rev
 
 const firewallOrphans = vi.fn();
 const deleteFirewallRules = vi.fn();
+const isElevated = vi.fn();
 const elevateRestart = vi.fn();
 const requestConfirmEx = vi.hoisted(() => vi.fn(async () => ({ ok: true, checked: false })));
 vi.mock("../lib/api", () => ({
@@ -28,6 +29,7 @@ vi.mock("../lib/api", () => ({
     appIconData: vi.fn(async () => null),
     firewallOrphans: (...a: unknown[]) => firewallOrphans(...a),
     deleteFirewallRules: (...a: unknown[]) => deleteFirewallRules(...a),
+    isElevated: () => isElevated(),
     elevateRestart: (...a: unknown[]) => elevateRestart(...a),
   },
 }));
@@ -38,6 +40,7 @@ vi.mock("../lib/toast", () => ({
 afterEach(cleanup);
 beforeEach(() => {
   vi.clearAllMocks();
+  isElevated.mockReset().mockResolvedValue(true);
   setLang("zh");
 });
 
@@ -51,9 +54,10 @@ it("lists an orphan rule with its missing program and keeps it unselected", asyn
   expect(screen.getByText(rule.app_path, { exact: false })).toBeTruthy();
   expect(screen.getByText(L.firewallDirectionIn, { exact: false })).toBeTruthy();
   expect(screen.getByRole("checkbox")).toHaveProperty("checked", false);
-  expect(
-    screen.getByRole("button", { name: new RegExp(L.firewallDeleteSelected) }),
-  ).toHaveProperty("disabled", true);
+  expect(screen.getByRole("button", {
+    name: new RegExp(L.firewallDeleteSelected), description: L.firewallHint,
+  })).toHaveProperty("disabled", true);
+  expect(isElevated).not.toHaveBeenCalled();
 });
 
 it("deletes only selected rules after confirmation and rescans", async () => {
@@ -72,6 +76,10 @@ it("deletes only selected rules after confirmation and rescans", async () => {
   fireEvent.click(screen.getByRole("checkbox"));
   fireEvent.click(screen.getByRole("button", { name: new RegExp(t().firewallDeleteSelected) }));
   await waitFor(() => expect(deleteFirewallRules).toHaveBeenCalledWith([selection(rule)]));
+  expect(requestConfirmEx).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+    message: t().firewallDeleteConfirm(1), danger: true,
+  }));
+  expect(elevateRestart).not.toHaveBeenCalled();
   await waitFor(() => expect(firewallOrphans).toHaveBeenCalledTimes(2));
   await screen.findByText(t().firewallEmpty);
 });
@@ -107,9 +115,47 @@ it("clears the selection when the select-all toggle is clicked again", async () 
   }
 });
 
-it("offers an elevated restart when deletion is refused for admin rights", async () => {
+it.each([false, true])("offers only a restart in standard mode (accepted: %s)", async ok => {
+  firewallOrphans.mockResolvedValue({ rules: [rule], omitted: 0, completeness: { status: "complete", roots_scanned: 1, failed_roots: [] } });
+  isElevated.mockResolvedValue(false);
+  requestConfirmEx.mockResolvedValueOnce({ ok, checked: false });
+  panel();
+  await screen.findByText(rule.rule_name);
+  fireEvent.click(screen.getByRole("checkbox"));
+  const remove = screen.getByRole("button", { name: new RegExp(t().firewallDeleteSelected) });
+  fireEvent.click(remove);
+  await waitFor(() => expect(requestConfirmEx).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+    message: t().firewallNeedAdmin,
+    confirmLabel: t().elevateAskOk,
+  })));
+  await waitFor(() => expect(remove.getAttribute("aria-disabled")).toBeNull());
+  expect(remove).toHaveProperty("disabled", false);
+  expect(elevateRestart).toHaveBeenCalledTimes(ok ? 1 : 0);
+  expect(deleteFirewallRules).not.toHaveBeenCalled();
+  expect(screen.getByRole("checkbox")).toHaveProperty("checked", true);
+  expect(firewallOrphans).toHaveBeenCalledOnce();
+});
+
+it("does not remove rules when an administrator declines the destructive confirmation", async () => {
+  firewallOrphans.mockResolvedValue({ rules: [rule], omitted: 0, completeness: { status: "complete", roots_scanned: 1, failed_roots: [] } });
+  requestConfirmEx.mockResolvedValueOnce({ ok: false, checked: false });
+  panel();
+  await screen.findByText(rule.rule_name);
+  fireEvent.click(screen.getByRole("checkbox"));
+  const remove = screen.getByRole("button", { name: new RegExp(t().firewallDeleteSelected) });
+  fireEvent.click(remove);
+  await waitFor(() => expect(requestConfirmEx).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+    message: t().firewallDeleteConfirm(1), danger: true,
+  })));
+  await waitFor(() => expect(remove.getAttribute("aria-disabled")).toBeNull());
+  expect(deleteFirewallRules).not.toHaveBeenCalled();
+  expect(elevateRestart).not.toHaveBeenCalled();
+});
+
+it("lets the backend decide when the token check fails and still handles its admin refusal", async () => {
   const { toast } = await import("../lib/toast");
   firewallOrphans.mockResolvedValue({ rules: [rule], omitted: 0, completeness: { status: "complete", roots_scanned: 1, failed_roots: [] } });
+  isElevated.mockRejectedValueOnce(new Error("token unavailable"));
   deleteFirewallRules.mockRejectedValue(
     "administrator privileges are required to delete firewall rules",
   );
@@ -124,6 +170,22 @@ it("offers an elevated restart when deletion is refused for admin rights", async
   );
   await waitFor(() => expect(elevateRestart).toHaveBeenCalledTimes(1));
   expect(toast.error).not.toHaveBeenCalled();
+});
+
+it("reports the result of an approved deletion even after leaving the panel", async () => {
+  const { toast } = await import("../lib/toast");
+  firewallOrphans.mockResolvedValue({ rules: [rule], omitted: 0, completeness: { status: "complete", roots_scanned: 1, failed_roots: [] } });
+  let finish!: (result: { removed: string[]; failed: string[]; backup_dir: string }) => void;
+  deleteFirewallRules.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+  const view = panel();
+  await screen.findByText(rule.rule_name);
+  fireEvent.click(screen.getByRole("checkbox"));
+  fireEvent.click(screen.getByRole("button", { name: new RegExp(t().firewallDeleteSelected) }));
+  await waitFor(() => expect(deleteFirewallRules).toHaveBeenCalledOnce());
+  view.unmount();
+  await act(async () => finish({ removed: [rule.value_name], failed: [], backup_dir: "sess" }));
+  expect(toast.success).toHaveBeenCalledWith(t().firewallDeleteOk, { detail: "sess" });
+  expect(firewallOrphans).toHaveBeenCalledOnce();
 });
 
 it("keeps the failed rules on screen after the list refreshes", async () => {
