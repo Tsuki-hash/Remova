@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { api } from "../lib/api";
 import { formatError } from "../lib/format";
-import { gateReasonText } from "../lib/decision";
+import { cleanupItemReasonText } from "../lib/cleanupFeedback";
 import { backendErrorText } from "../lib/backendText";
 import { requestConfirmEx } from "../lib/confirm";
 import { t } from "../i18n";
@@ -19,16 +19,6 @@ function imageUnderRoot(image: string | undefined, root: string | undefined): bo
     && !segments.includes("..")
     && !segments.includes(".")
     && img.startsWith(`${base}\\`);
-}
-
-function reason(message: string) {
-  const L = t();
-  const known = gateReasonText(message, L);
-  if (known !== L.backendDetailUnavailable) return known;
-  if (/os error (32|33)\b|sharing violation|being used by another process|另一个进程|另一进程/i.test(message)) return L.reportFileBusy;
-  if (/os error 5\b|access is denied|permission denied|拒绝访问/i.test(message)) return L.reportPermissionDenied;
-  if (/os error (2|3)\b|not found|cannot find|找不到/i.test(message)) return L.reasonPathMissing;
-  return known;
 }
 
 function pathDepth(path: string): number {
@@ -51,6 +41,7 @@ function safeOwnerPath(path: string): string | undefined {
 function ResultGroup({
   label,
   items,
+  outcome,
   expanded,
   onRetry,
   onRescan,
@@ -59,6 +50,7 @@ function ResultGroup({
 }: {
   label: string;
   items: ItemDetail[];
+  outcome?: string;
   expanded: boolean;
   onRetry?: (paths: string[]) => void | Promise<void>;
   onRescan?: () => void;
@@ -125,7 +117,7 @@ function ResultGroup({
     }
   };
   const failed = items.filter((item) => item.status === "failed");
-  return <details open={expanded} style={{ marginTop: 8 }}>
+  return <details data-cleanup-outcome={outcome} open={expanded} style={{ marginTop: 8 }}>
     <summary>{label} · {items.length}</summary>
     {openError && <p role="alert">{openError}</p>}
     {onRetry && failed.length > 0 && (
@@ -158,7 +150,7 @@ function ResultGroup({
         const effectiveLockRoot = lockRoot || fallbackRoot;
         return <div key={`${item.path}-${index}`} style={{ padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
           <code style={{ display: "block", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{item.path}</code>
-          {item.message && <div>{reason(item.message)}</div>}
+          {item.message && <div>{cleanupItemReasonText(item.message, L)}</div>}
           {item.status === "failed" && <button style={{ ...css.btnGhost, height: 28 }} disabled={!canLocate}
             title={canLocate ? item.path : L.reportLocateUnavailable} aria-label={`${L.openLocation}: ${item.path}`}
             onClick={() => { setOpenError(null); void api.openPath(item.path).catch(e => setOpenError(`${item.path}: ${formatError(e)}`)); }}>{L.openLocation}</button>}
@@ -235,7 +227,7 @@ export function CleanupResultDetails({
     {title && <h3 style={{ margin: "8px 0 0", fontSize: 13, fontWeight: 650, color: "var(--fg)" }}>{title}</h3>}
     {groups.map(([status, label]) => {
       const entries = items.filter(item => item.status === status);
-      return entries.length ? <ResultGroup key={status} label={label} items={entries}
+      return entries.length ? <ResultGroup key={status} label={label} items={entries} outcome={status}
         expanded={status === "failed" || (expandSkipped && status === "skipped")}
         onRetry={status === "failed" ? onRetry : undefined}
         onRescan={status === "failed" ? onRescan : undefined}

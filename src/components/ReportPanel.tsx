@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { BackButton } from "./ui/BackButton";
 import { Deco } from "./ui/Glyph";
@@ -12,7 +12,7 @@ import { CleanupResultDetails } from "./CleanupResultDetails";
 import { DeepRegistryCheck } from "./DeepRegistryCheck";
 import { requestBackupSession } from "../lib/backupSessionNavigation";
 import { backendText } from "../lib/backendText";
-import { cleanupAbortText, hasHistorySaveWarning } from "../lib/cleanupFeedback";
+import { cleanupAbortText, cleanupReportNextStep, hasHistorySaveWarning } from "../lib/cleanupFeedback";
 import { downloadAudit } from "../lib/exportAuditReport";
 import { reviewSessionFor, reviewVerdictFor } from "../lib/rescanRounds";
 import { requestConfirmEx } from "../lib/confirm";
@@ -120,6 +120,19 @@ export function ReportPanel({
     ? backupDir.split(/[\\/]/).filter(Boolean).at(-1) : undefined;
   const planned = report.dry_run ? ("deleted_planned" in report ? report.deleted_planned : report.deleted) : null;
   const result = !report.dry_run && "deleted" in report ? report : null;
+  const nextStep = result && cleanupReportNextStep(result, L);
+  const detailsRef = useRef<HTMLDetailsElement>(null);
+  const detailsId = useId();
+  const showDetails = () => {
+    const details = detailsRef.current;
+    if (!details) return;
+    details.open = true;
+    const target = nextStep?.target
+      ? details.querySelector<HTMLDetailsElement>(`details[data-cleanup-outcome="${nextStep.target}"]`)
+      : null;
+    if (target) target.open = true;
+    (target ?? details).querySelector("summary")?.focus();
+  };
   return (
     <div
       ref={panel}
@@ -194,6 +207,17 @@ export function ReportPanel({
             : null}
         </div>
       ) : null}
+      {nextStep && (
+        <div style={{ display: "flex", alignItems: "center", gap: "6px 12px", flexWrap: "wrap", marginTop: 8 }}>
+          <div aria-live="polite" style={{ flex: "1 1 240px", lineHeight: 1.5 }}>
+            {nextStep.restart && <div style={{ color: "var(--warn-ink)", fontWeight: 600 }}>{nextStep.restart}</div>}
+            {nextStep.message && <div>{nextStep.message}</div>}
+          </div>
+          <button type="button" style={css.btnGhost} aria-controls={detailsId} onClick={showDetails}>
+            {nextStep.label}
+          </button>
+        </div>
+      )}
       {(result || onRescan) && (
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
           {backupSession ? (
@@ -217,7 +241,7 @@ export function ReportPanel({
         </div>
       )}
 
-      <details open={Boolean(result && (result.aborted || result.failed || result.skipped))} style={{ marginTop: 8 }}>
+      <details id={detailsId} ref={detailsRef} open={Boolean(result && (result.aborted || result.failed || result.skipped))} style={{ marginTop: 8 }}>
         <summary style={{ cursor: "pointer", fontWeight: 600 }}>{L.cleanupReportDetails}</summary>
         <div style={{ maxHeight: 360, overflow: "auto" }}>
       {!report.dry_run && "deleted" in report && (
@@ -249,19 +273,9 @@ export function ReportPanel({
               {L.reportFlowDone}
             </div>
           )}
-          <div style={{ marginTop: 4, fontWeight: 500 }}>
-            {report.failed > 0
-              ? L.reportNextFailed
-              : report.skipped > 0
-                ? L.reportNextSkipped
-                : report.aborted
-                  ? L.reportNextCheck
-                  : report.delayed
-                    ? L.reportNextDelayed
-                  : backupSession
-                    ? L.reportNextOk
-                    : L.reportNextNoBackup}
-          </div>
+          {!nextStep && <div style={{ marginTop: 4, fontWeight: 500 }}>
+            {backupSession ? L.reportNextOk : L.reportNextNoBackup}
+          </div>}
         </div>
       )}
       {result && !result.aborted &&

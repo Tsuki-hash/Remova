@@ -114,6 +114,52 @@ it.each(["zh", "en"] as const)("separates pending reboot counts and never claims
   }
 });
 
+it.each(["zh", "en"] as const)("keeps reboot guidance visible and focuses the pending group in %s", lang => {
+  setLang(lang);
+  const L = t();
+  const onRescan = vi.fn();
+  const report: FullCleanupReport = { app_name: "sample", dry_run: false, backup_dir: "", uninstall_ok: true,
+    uninstall_message: "", deleted: 0, failed: 0, skipped: 0, delayed: 1, aborted: false,
+    restore_point_ok: false, restore_point_msg: "", errors: [],
+    item_details: [{ path: "C:\\Sample\\pending.bin", kind: "file", status: "delayed", message: "reboot delete" }] };
+  render(<ReportPanel report={report} aiEnabled={false} aiReportBusy={false} aiReportNote={null}
+    verifyRows={null} onRescan={onRescan} onDismiss={() => {}} onRegenerate={() => {}} />);
+  const details = screen.getByText(L.cleanupReportDetails).closest("details")!;
+  const pending = screen.getByText(`${L.reportPendingReboot} · 1`);
+  expect(details.open).toBe(false);
+  expect(screen.getByText(L.reportNextDelayed).closest("details")).toBeNull();
+  expect(pending.closest("details")?.open).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: L.reportViewDelayed }));
+  expect(details.open).toBe(true);
+  expect(pending.closest("details")?.open).toBe(true);
+  expect(document.activeElement).toBe(pending);
+  expect(onRescan).not.toHaveBeenCalled();
+});
+
+it.each([
+  { scenario: "known file lock", count: 1, reasons: ["sharing violation (os error 32)"], busy: true },
+  { scenario: "mixed reasons", count: 2, reasons: ["sharing violation (os error 32)", "access is denied (os error 5)"], busy: false },
+  { scenario: "missing details", count: 2, reasons: ["sharing violation (os error 32)"], busy: false },
+  { scenario: "unknown reason", count: 1, reasons: ["native diagnostic"], busy: false },
+])("shows only supported failure guidance for $scenario", ({ count, reasons, busy }) => {
+  const L = t();
+  const report: FullCleanupReport = { app_name: "sample", dry_run: false, backup_dir: "", uninstall_ok: false,
+    uninstall_message: "", deleted: 0, failed: count, skipped: 0, aborted: false, delayed: 1,
+    restore_point_ok: false, restore_point_msg: "", errors: [],
+    item_details: reasons.map((message, index) => ({ path: `C:\\Sample\\file-${index}.bin`, kind: "file",
+      status: "failed", message })) };
+  render(<ReportPanel report={report} aiEnabled={false} aiReportBusy={false} aiReportNote={null}
+    verifyRows={null} onDismiss={() => {}} onRegenerate={() => {}} />);
+  expect(screen.getByText(busy ? L.reportNextBusy : L.reportNextFailed).closest("details")).toBeNull();
+  expect(screen.getByText(L.reportNextDelayed).closest("details")).toBeNull();
+  expect(screen.queryByText(busy ? L.reportNextFailed : L.reportNextBusy)).toBeNull();
+  const failure = screen.getByText(`${L.reportFailed} · ${reasons.length}`);
+  failure.closest("details")!.open = false;
+  fireEvent.click(screen.getByRole("button", { name: L.reportViewFailed }));
+  expect(failure.closest("details")?.open).toBe(true);
+  expect(document.activeElement).toBe(failure);
+});
+
 it.each(["zh", "en"] as const)("shows the single cleanup cancellation next to its actual counts in %s", lang => {
   setLang(lang);
   const L = t();
@@ -208,8 +254,14 @@ it("keeps the cleanup counts, skipped reason and return visible on the report", 
   render(<ReportPanel report={report} aiEnabled={false} aiReportBusy={false} aiReportNote={null}
     verifyRows={null} onDismiss={onDismiss} onRegenerate={() => {}} />);
   expect(screen.getByRole("group", { name: L.cleanupResultCounts }).closest("details")).toBeNull();
+  expect(screen.getByText(L.reportNextReason(L.reasonUserData)).closest("details")).toBeNull();
   expect(screen.getByText(L.reasonUserData).closest("details")?.open).toBe(true);
-  expect(screen.getByText(L.cleanupReportDetails).closest("details")?.open).toBe(true);
+  const details = screen.getByText(L.cleanupReportDetails).closest("details")!;
+  expect(details.open).toBe(true);
+  details.open = false;
+  fireEvent.click(screen.getByRole("button", { name: L.reportViewSkipped }));
+  expect(details.open).toBe(true);
+  expect(document.activeElement).toBe(screen.getByText(`${L.reportSkipped} · 1`));
   fireEvent.click(screen.getByRole("button", { name: L.navBack }));
   expect(onDismiss).toHaveBeenCalledOnce();
 });

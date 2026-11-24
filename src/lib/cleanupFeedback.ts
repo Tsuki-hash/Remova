@@ -1,7 +1,43 @@
 import type { FullCleanupReport } from "../types";
 import type { Strings } from "../i18n";
 import { backendText, isNamedStreamRefusal } from "./backendText";
+import { gateReasonText } from "./decision";
 import { toast } from "./toast";
+
+export function cleanupItemReasonText(message: string, L: Strings): string {
+  const known = gateReasonText(message, L);
+  if (known !== L.backendDetailUnavailable) return known;
+  if (/os error (32|33)\b|sharing violation|being used by another process|另一个进程|另一进程/i.test(message)) return L.reportFileBusy;
+  if (/os error 5\b|access is denied|permission denied|拒绝访问/i.test(message)) return L.reportPermissionDenied;
+  if (/os error (2|3)\b|not found|cannot find|找不到/i.test(message)) return L.reasonPathMissing;
+  return known;
+}
+
+export function cleanupReportNextStep(report: FullCleanupReport, L: Strings) {
+  const status = report.failed > 0 ? "failed" : report.skipped > 0 ? "skipped" : report.delayed ? "delayed" : null;
+  if (!status && !report.aborted) return null;
+
+  const items = status ? report.item_details.filter(item => item.status === status) : [];
+  const target = items.length ? status : null;
+  let message: string | null = report.aborted && !status ? L.reportNextCheck : null;
+  if (status === "failed" || status === "skipped") {
+    const reason = cleanupItemReasonText(items[0]?.message ?? "", L);
+    // The per-item list may omit outcomes. Only name a common cause if every
+    // reported item in this group is represented and has the same known cause.
+    const allAgree = items.length === report[status] && reason && reason !== L.backendDetailUnavailable &&
+      items.every(item => cleanupItemReasonText(item.message, L) === reason);
+    if (allAgree) message = status === "failed" && reason === L.reportFileBusy
+      ? L.reportNextBusy : L.reportNextReason(reason);
+    else message = status === "failed" ? L.reportNextFailed : L.reportNextSkippedSummary;
+  }
+  return {
+    message,
+    restart: report.delayed ? L.reportNextDelayed : null,
+    target,
+    label: target === "failed" ? L.reportViewFailed : target === "skipped" ? L.reportViewSkipped
+      : target === "delayed" ? L.reportViewDelayed : L.reportViewDetails,
+  };
+}
 
 export function isLegacyHistoryWarning(error: string): boolean {
   return error.startsWith("cleanup history could not be saved:");
