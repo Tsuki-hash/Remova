@@ -45,8 +45,9 @@ Set repository variable `SIGNPATH_ENABLED` to exactly `true`, and configure:
 
 The thumbprint is the approved certificate's 40-digit hexadecimal SHA-1 thumbprint.
 Configure SignPath artifact configurations `application` and `installers` using the
-XML templates in `.github/signpath/`. Production signing may require approval of
-both signing requests. Confirm the provider's applicable subscription and approval policy.
+XML templates in `.github/signpath/`. Replace any older single-executable `application`
+configuration before enabling signing. Production signing may require approval of both
+signing requests. Confirm the provider's applicable subscription and approval policy.
 
 When enabled, missing settings, failed signing, invalid certificates, unexpected signers
 or missing timestamps stop the release. The workflow never silently falls back to
@@ -93,12 +94,18 @@ The draft contains NSIS, MSI and portable packages, `SHA256SUMS.txt` and
    push CI run for that exact commit passed both `test` and `package`. Validate
    the signing configuration and version.
 2. Build the application. Embed the updater public key when the updater is enabled.
-3. If enabled, sign and verify the application through SignPath.
-4. Bundle the application into NSIS and MSI installers.
+3. If enabled, prepare the portable, NSIS and MSI application executables with
+   their respective Tauri bundle markers, then sign and verify all three through
+   SignPath using the current `application.xml` configuration.
+4. Bundle the channel-specific application into each installer. The portable
+   executable retains its portable marker.
 5. If enabled, sign and verify the final installers through SignPath.
 6. For updater-enabled builds, generate Tauri signatures for the final installers
    and verify them against the embedded public key before generating `latest.json`.
-7. Complete smoke checks and portable packaging. The tag workflow uploads the packages, checksums, SBOM and any updater assets to a draft GitHub Release.
+7. Complete smoke checks and portable packaging. With SignPath enabled, extract
+   the final packages and compare each embedded executable's SHA-256 with its
+   verified signed input. The tag workflow uploads the packages, checksums, SBOM
+   and any updater assets to a draft GitHub Release.
 8. Download the draft attachments together and generate the executable reference
    with [the acceptance tools](../scripts/acceptance/README.md). Review the
    checksums, SBOM, notices, publication mode and [recovery guide](../RECOVERY.md).

@@ -160,13 +160,18 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -File scripts/read-signing-metadata.ps1 -Path src-tauri/target/release/remova.exe
 
+      - name: prepare application signing inputs for each distribution channel
+        if: steps.signing-config.outputs.signpath-enabled == 'true'
+        run: node scripts/prepare-application-signing.mjs src-tauri/target/release/remova.exe .release-signing/unsigned-application
+
       - name: upload unsigned application
         if: steps.signing-config.outputs.signpath-enabled == 'true'
         id: unsigned-app
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: Remova-unsigned-application
-          path: src-tauri/target/release/remova.exe
+          path: .release-signing/unsigned-application/
+          include-hidden-files: true
           if-no-files-found: error
 
       - name: sign application (maintainer approval required)
@@ -186,14 +191,25 @@ jobs:
             product-version: ${{ toJSON(steps.app-metadata.outputs.product-version) }}
             file-version: ${{ toJSON(steps.app-metadata.outputs.file-version) }}
 
-      - name: verify and stage signed application
+      - name: bundle channel-specific signed applications
         if: steps.signing-config.outputs.signpath-enabled == 'true'
         shell: pwsh
         run: |
-          & scripts/verify-authenticode.ps1 -Paths @('.release-signing/application/remova.exe')
-          Copy-Item -LiteralPath .release-signing/application/remova.exe -Destination src-tauri/target/release/remova.exe -Force
+          $signed = '.release-signing/application'
+          & scripts/verify-authenticode.ps1 -Paths @('portable', 'msi', 'nsis' | ForEach-Object { "$signed/$_/remova.exe" })
+          $application = 'src-tauri/target/release/remova.exe'
+          try {
+            foreach ($channel in @('msi', 'nsis')) {
+              Copy-Item -LiteralPath "$signed/$channel/remova.exe" -Destination $application -Force
+              npx tauri bundle --bundles $channel --no-sign --no-binary-patching --ci --config .release-signing/tauri.release.json
+              if ($LASTEXITCODE -ne 0) { throw "Could not bundle the signed $channel application." }
+            }
+          } finally {
+            Copy-Item -LiteralPath "$signed/portable/remova.exe" -Destination $application -Force
+          }
 
       - name: bundle final application
+        if: steps.signing-config.outputs.signpath-enabled != 'true'
         # Sign final installer bytes later, after optional SignPath signing.
         run: npx tauri bundle --config .release-signing/tauri.release.json
 
@@ -327,6 +343,7 @@ jobs:
         shell: pwsh
         env:
           CANDIDATE_VERSION: ${{ steps.signing-config.outputs.version }}
+          SIGNPATH_ENABLED: ${{ steps.signing-config.outputs.signpath-enabled }}
         run: |
           $bundle = 'src-tauri/target/release/bundle'
           $flat = (New-Item -ItemType Directory -Path '.release-signing/packaged').FullName
@@ -334,7 +351,15 @@ jobs:
           $sevenZip = (Get-Command 7z.exe -ErrorAction SilentlyContinue).Source
           if (-not $sevenZip) { $sevenZip = Join-Path $env:ProgramFiles '7-Zip/7z.exe' }
           $wixDark = Join-Path $env:LOCALAPPDATA 'tauri/WixTools314/dark.exe'
-          & scripts/acceptance/get-package-exe-reference.ps1 -Artifacts $flat -CandidateVersion $env:CANDIDATE_VERSION -SevenZip $sevenZip -WixDark $wixDark | Out-Null
+          $reference = & scripts/acceptance/get-package-exe-reference.ps1 -Artifacts $flat -CandidateVersion $env:CANDIDATE_VERSION -SevenZip $sevenZip -WixDark $wixDark | ConvertFrom-Json -AsHashtable
+          if ($env:SIGNPATH_ENABLED -ceq 'true') {
+            foreach ($channel in @('nsis', 'msi', 'portable')) {
+              $expected = (Get-FileHash -LiteralPath ".release-signing/application/$channel/remova.exe" -Algorithm SHA256).Hash
+              if ($reference[$channel].executable_sha256 -ine $expected) {
+                throw "The $channel package does not contain the exact verified signed application."
+              }
+            }
+          }
 
       - name: generate dependency sbom
         run: node scripts/make-sbom.mjs

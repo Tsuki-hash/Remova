@@ -4,7 +4,13 @@
     <parameter name="file-version" required="true" />
   </parameters>
   <zip-file>
-    <pe-file path="remova.exe" product-name="Remova" product-version="${product-version}" file-version="${file-version}">
+    <pe-file path="portable/remova.exe" product-name="Remova" product-version="${product-version}" file-version="${file-version}">
+      <authenticode-sign />
+    </pe-file>
+    <pe-file path="msi/remova.exe" product-name="Remova" product-version="${product-version}" file-version="${file-version}">
+      <authenticode-sign />
+    </pe-file>
+    <pe-file path="nsis/remova.exe" product-name="Remova" product-version="${product-version}" file-version="${file-version}">
       <authenticode-sign />
     </pe-file>
   </zip-file>
