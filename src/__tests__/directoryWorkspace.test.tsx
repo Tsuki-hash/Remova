@@ -5,7 +5,9 @@ import { useState } from "react";
 import { DirectoryWorkspace, type FolderInspection } from "../components/DirectoryWorkspace";
 import { t } from "../i18n";
 import { api } from "../lib/api";
-import type { FolderReferences, InstalledApp } from "../types";
+import { getConfirm, settleConfirm } from "../lib/confirm";
+import { DISK_RADAR_SNAPSHOT_KEY, snapshotDiskRadar } from "../lib/diskRadarSnapshot";
+import type { FolderReferences, InstalledApp, RegenerableItem } from "../types";
 
 vi.mock("../lib/api", () => ({
   api: {
@@ -17,6 +19,9 @@ vi.mock("../lib/api", () => ({
     pickReferenceFolder: vi.fn(),
     listLocalDrives: vi.fn(),
     listTopDirSizes: vi.fn(),
+    diskRadarVolumeId: vi.fn(async () => "volume-guid"),
+    regenerableLayouts: vi.fn(),
+    deleteRegenerableLayouts: vi.fn(),
   },
 }));
 
@@ -41,7 +46,99 @@ function Fixture({ radar = true, path }: { radar?: boolean; path?: string }) {
 
 afterEach(() => {
   cleanup();
+  localStorage.clear();
   vi.clearAllMocks();
+});
+
+function growingFolder(path: string) {
+  const row = { path, name: "Temp", parent: path.slice(0, path.lastIndexOf("\\")), size_kb: 100 };
+  const baseline = snapshotDiskRadar("volume-guid", "system:v1", [row]);
+  localStorage.setItem(DISK_RADAR_SNAPSHOT_KEY, JSON.stringify(baseline));
+  vi.mocked(api.listLocalDrives).mockResolvedValue([{ letter: "D", is_system: true, total_gb: 10, free_gb: 2 }]);
+  vi.mocked(api.listTopDirSizes).mockResolvedValue([{ ...row, size_kb: 200 }]);
+  vi.mocked(api.inspectFolderReferences).mockResolvedValue({ references: [], incomplete: ["service"], omitted: 0 });
+}
+
+const cache: RegenerableItem = {
+  path: "D:\\Windows\\Temp", reason: "win_temp", deletable: true,
+  size_kb: 180, block_reason: null, size_capped: false,
+};
+
+it("opens a fresh, unselected cache preview and restores focus and scroll on both returns", async () => {
+  const L = t();
+  growingFolder(cache.path);
+  vi.mocked(api.regenerableLayouts)
+    .mockResolvedValueOnce({ items: [cache], omitted: 0 })
+    .mockResolvedValueOnce({ items: [{ ...cache, size_kb: 160, size_capped: true },
+      { ...cache, path: "D:\\Users\\Example\\AppData\\Local\\Temp" }], omitted: 0 });
+  render(<Fixture />);
+  const growth = await screen.findByRole("button", { name: `${L.diskRadarInspectGrowth}: ${cache.path}` });
+  const dialog = screen.getByRole("dialog", { name: L.diskRadarShortcut });
+  dialog.scrollTo = (options?: ScrollToOptions | number) => {
+    dialog.scrollTop = typeof options === "object" ? options.top ?? 0 : 0;
+  };
+  expect(api.regenerableLayouts).not.toHaveBeenCalled();
+  dialog.scrollTop = 120;
+  fireEvent.click(growth);
+  const shortcut = await screen.findByRole("button", { name: L.diskRadarCacheOpen });
+  expect(api.regenerableLayouts).toHaveBeenNthCalledWith(1, cache.path);
+  dialog.scrollTop = 55;
+  fireEvent.click(shortcut);
+
+  const target = screen.getByRole("dialog", { name: L.regenTitle });
+  const selection = await within(target).findByRole<HTMLInputElement>("checkbox", { name: cache.path });
+  expect(selection.checked).toBe(false);
+  expect(within(target).getAllByRole("checkbox")).toHaveLength(1);
+  const clean = within(target).getByRole<HTMLButtonElement>("button", { name: L.regenClean });
+  expect(clean.disabled).toBe(true);
+  expect(within(target).getByText(L.diskRadarCacheSizeFloor("160 KB"))).toBeTruthy();
+  expect(api.regenerableLayouts).toHaveBeenNthCalledWith(2, cache.path);
+  expect(api.deleteRegenerableLayouts).not.toHaveBeenCalled();
+
+  fireEvent.click(selection);
+  fireEvent.click(clean);
+  expect(getConfirm()?.message).toContain(cache.path);
+  expect(api.deleteRegenerableLayouts).not.toHaveBeenCalled();
+  await act(async () => { settleConfirm(false); });
+  expect(api.deleteRegenerableLayouts).not.toHaveBeenCalled();
+
+  fireEvent.click(within(target).getByRole("button", { name: L.folderInspectBack }));
+  expect(document.activeElement).toBe(shortcut);
+  expect(dialog.scrollTop).toBe(55);
+  fireEvent.click(screen.getByRole("button", { name: L.folderInspectRadar }));
+  expect(document.activeElement).toBe(growth);
+  expect(dialog.scrollTop).toBe(120);
+  expect(api.listTopDirSizes).toHaveBeenCalledTimes(1);
+  expect(api.listLocalDrives).toHaveBeenCalledTimes(1);
+});
+
+it("does not offer cleanup for unrelated folders even when their names match", async () => {
+  const L = t();
+  const path = "D:\\Projects\\Temp";
+  growingFolder(path);
+  vi.mocked(api.regenerableLayouts).mockResolvedValueOnce({ items: [cache], omitted: 0 });
+  render(<Fixture />);
+  fireEvent.click(await screen.findByRole("button", { name: `${L.diskRadarInspectGrowth}: ${path}` }));
+  expect(await screen.findByText(L.diskRadarCacheUnavailable)).toBeTruthy();
+  expect(await screen.findByText(L.folderInspectPartial(L.folderInspectService))).toBeTruthy();
+  expect(screen.getByRole("button", { name: L.openLocation })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: L.diskRadarCacheOpen })).toBeNull();
+  expect(api.deleteRegenerableLayouts).not.toHaveBeenCalled();
+});
+
+it("does not carry a previously eligible cache into a preview that cannot verify it", async () => {
+  const L = t();
+  growingFolder(cache.path);
+  vi.mocked(api.regenerableLayouts).mockResolvedValueOnce({ items: [cache], omitted: 0 })
+    .mockResolvedValueOnce({ items: [], omitted: 0 });
+  render(<Fixture />);
+  fireEvent.click(await screen.findByRole("button", { name: `${L.diskRadarInspectGrowth}: ${cache.path}` }));
+  fireEvent.click(await screen.findByRole("button", { name: L.diskRadarCacheOpen }));
+  const target = within(screen.getByRole("dialog", { name: L.regenTitle }));
+  expect(await target.findByText(L.diskRadarCacheUnavailable)).toBeTruthy();
+  expect(target.queryByRole("checkbox")).toBeNull();
+  expect(target.queryByRole("button", { name: L.regenClean })).toBeNull();
+  expect(api.deleteRegenerableLayouts).not.toHaveBeenCalled();
 });
 
 it("restores the reference trigger and the original radar focus and scroll position", async () => {

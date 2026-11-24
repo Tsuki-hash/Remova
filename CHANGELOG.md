@@ -4,6 +4,13 @@ All notable changes to Remova will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### 新增
+
+- 磁盘雷达的「空间追踪」显示同一卷、同一扫描范围内增长最多的目录，以及基线和当前的测量结果。复扫不会替换基线；取消或失败后明确标出保留的上次结果。
+- 增长项可反查引用。匹配可再生缓存的目录可进入单目录清理预览，按当前状态重新检查，不自动勾选；返回后继续查看原增长项。
+
 ## [1.5.2]
 
 本版提供未签名安装包，更新请手动下载。Windows 可能显示发布者或 SmartScreen 提示。

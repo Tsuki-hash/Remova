@@ -181,6 +181,17 @@ describe("api IPC contract", () => {
     expect(feInvokedCommands()).toEqual(registered);
   });
 
+  it("uses the read-only cache scan for both the overview and an exact target", async () => {
+    const path = "D:\\Windows\\Temp";
+    vi.mocked(invoke).mockResolvedValueOnce({ items: [], omitted: 0 }).mockResolvedValueOnce({ items: [], omitted: 0 });
+    await api.regenerableLayouts();
+    await api.regenerableLayouts(path);
+    expect(vi.mocked(invoke).mock.calls.slice(-2)).toEqual([
+      ["scan_regenerable_layouts", { path: undefined }],
+      ["scan_regenerable_layouts", { path }],
+    ]);
+  });
+
   it("sends the same operation ID on restore and cancel and binds deletion to its confirmed status", async () => {
     vi.mocked(invoke).mockResolvedValueOnce([]).mockResolvedValueOnce(true).mockResolvedValueOnce(undefined);
     const operationId = "restore-example";

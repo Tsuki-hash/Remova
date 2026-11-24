@@ -974,8 +974,10 @@ export default function App() {
               onCheckUpdate={() => void checkUpdateNow(setUpdateInfo, L)}
               onReopenOnboarding={reopenSafety}
               onGoSoftware={() => goNav("software")}
-              onInspectFolder={row => {
-                if (!busyRef.current && !scanning) setInspection({ path: row?.path ?? "", measurement: row, returnToRadar: true });
+              onInspectFolder={(row, opener, origin) => {
+                if (busyRef.current || scanning) return;
+                opener.focus({ preventScroll: true });
+                setInspection({ path: row?.path ?? "", measurement: row, origin, returnToRadar: true });
               }}
               onLastReport={(r) => coreSetReport(r)}
               onAiEnabledChange={(enabled) => {

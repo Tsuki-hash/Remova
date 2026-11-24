@@ -1,0 +1,26 @@
+.disk-radar-comparison {
+  padding: 12px;
+  margin-bottom: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.disk-radar-comparison-heading,
+.disk-radar-comparison-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+.disk-radar-comparison-heading > h3 { flex: 1 1 150px; margin: 0; font-size: 14px; }
+.disk-radar-comparison-note { margin: 6px 0; color: var(--muted); }
+.disk-radar-comparison-list { list-style: none; padding: 0; margin: 8px 0; }
+.disk-radar-comparison details > .disk-radar-comparison-list { max-height: 180px; overflow-y: auto; }
+.disk-radar-comparison-row {
+  border-block-start: 1px solid var(--border);
+  padding-block: 7px;
+}
+.disk-radar-comparison-folder { flex: 1 1 180px; min-width: 0; overflow-wrap: anywhere; }
+.disk-radar-comparison-folder > span { display: block; }
+.disk-radar-comparison-path { color: var(--muted); font-size: 12px; }
+.disk-radar-comparison-size { font-variant-numeric: tabular-nums; }
+.disk-radar-comparison summary { color: var(--muted); cursor: pointer; }

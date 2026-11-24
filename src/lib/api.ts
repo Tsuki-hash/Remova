@@ -180,8 +180,8 @@ export const api = {
   auditProfileRoot: () => invoke<string | null>("audit_profile_root"),
   /** Disk-space overview: judgement-table triage of anchored roots (read-only). */
   spaceTriage: () => invoke<TriageScanResult>("scan_space_triage"),
-  /** Disk-space overview: regenerable layouts (read-only, fixed set). */
-  regenerableLayouts: () => invoke<RegenerableScanResult>("scan_regenerable_layouts"),
+  /** Read-only: an optional path narrows the scan to an exact fixed layout. */
+  regenerableLayouts: (path?: string) => invoke<RegenerableScanResult>("scan_regenerable_layouts", { path }),
   /** Delete the contents of regenerable layouts (server re-admits each path). */
   deleteRegenerableLayouts: (paths: string[]) =>
     invoke<RegenerableCleanupReport>("delete_regenerable_layouts", { paths }),

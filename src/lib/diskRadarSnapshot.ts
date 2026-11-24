@@ -21,11 +21,11 @@ function rowKey(row: DirSizeRow) {
   return `${row.aggregate ? "total" : "folder"}:${path}`;
 }
 
-export function snapshotDiskRadar(volume: string, scope: string, rows: DirSizeRow[]): DiskRadarSnapshot {
+export function snapshotDiskRadar(volume: string, scope: string, rows: DirSizeRow[], takenAt = Date.now()): DiskRadarSnapshot {
   return {
     volume,
     scope,
-    takenAt: Date.now(),
+    takenAt,
     rows: rows.map(row => ({ key: rowKey(row), name: row.name, size: row.size_kb, capped: Boolean(row.capped) })),
   };
 }

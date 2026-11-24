@@ -408,8 +408,19 @@ fn delete_with(
     Ok(report)
 }
 
-pub fn scan_regenerable() -> Result<RegenerableScanResult, String> {
-    Ok(scan_with(&system_layouts()?, servicing_busy_cached()))
+fn restrict_layouts(layouts: &mut Vec<(PathBuf, &'static str)>, target: Option<&str>) {
+    if let Some(target) = target {
+        // A radar row is evidence about its exact path, not a case-folded
+        // alias that might resolve to a different directory on Windows.
+        layouts.retain(|(path, _)| path.as_os_str() == std::ffi::OsStr::new(target));
+    }
+}
+
+pub fn scan_regenerable(target: Option<&str>) -> Result<RegenerableScanResult, String> {
+    let mut layouts = system_layouts()?;
+    restrict_layouts(&mut layouts, target);
+    let busy = layouts.iter().any(|(_, reason)| *reason == "cbs_temp") && servicing_busy_cached();
+    Ok(scan_with(&layouts, busy))
 }
 
 /// Admit only fixed layouts from Windows and delete through the held roots.
@@ -487,6 +498,30 @@ mod tests {
             None,
             "prefix is not enough"
         );
+    }
+
+    #[test]
+    fn radar_target_only_selects_the_exact_fixed_path() {
+        let exact = r"D:\Windows\Temp";
+        let fixtures = vec![
+            (PathBuf::from(exact), "win_temp"),
+            (PathBuf::from(r"D:\User\Temp"), "user_temp"),
+        ];
+        let mut layouts = fixtures.clone();
+        restrict_layouts(&mut layouts, None);
+        assert_eq!(layouts, fixtures);
+        restrict_layouts(&mut layouts, Some(exact));
+        assert_eq!(layouts, vec![(PathBuf::from(exact), "win_temp")]);
+        for target in [
+            r"D:\Elsewhere\Temp",
+            r"D:\Windows\Temp\Child",
+            r"D:\Windows\temp",
+            "",
+        ] {
+            let mut layouts = fixtures.clone();
+            restrict_layouts(&mut layouts, Some(target));
+            assert!(layouts.is_empty());
+        }
     }
 
     #[test]

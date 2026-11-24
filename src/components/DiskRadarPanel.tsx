@@ -28,6 +28,8 @@ const visuallyHidden = {
 /** What the current list does not show (drill-down only). */
 type PartialInfo = { omitted: number; capped: boolean };
 
+export type RadarInspectHandler = (row: DirSizeRow | undefined, opener: HTMLButtonElement, origin?: "growth") => void;
+
 /** Disk usage radar — read-only. Open path / drill down; never deletes. */
 export function DiskRadarPanel({
   onClose,
@@ -36,7 +38,7 @@ export function DiskRadarPanel({
 }: {
   onClose?: () => void;
   onError: (msg: string) => void;
-  onInspect?: (row: DirSizeRow | undefined, opener: HTMLButtonElement) => void;
+  onInspect?: RadarInspectHandler;
 }) {
   const L = t();
   const [rows, setRows] = useState<DirSizeRow[] | null>(null);
@@ -46,6 +48,7 @@ export function DiskRadarPanel({
   const [busy, setBusy] = useState(false);
   const [crumbs, setCrumbs] = useState<DirSizeRow[]>([]);
   const [scope, setScope] = useState<RadarScope | null>(null);
+  const [measuredAt, setMeasuredAt] = useState<number | null>(null);
   const { next: nextRequest, isCurrent: isCurrentRequest, invalidate: invalidateRequest } = useRequestSeq();
   const busyRef = useRef(false);
   const { runReadOnly, cancel, progress } = useAssociationScan();
@@ -71,35 +74,26 @@ export function DiskRadarPanel({
       const range = parent
         ? `directory:v1:${parent.slice(2).replaceAll("/", "\\").replace(/\\+$/, "")}`
         : system ? "system:v1" : "volume:v1";
-      if (parent) {
-        // The drill-down result carries what the list leaves out (rows dropped
-        // by the row cap, plus whether the parent scan was cut short). The top
-        // view is a top-N ranking: rows dropped by its cutoff are not reported,
-        // and incompleteness shows through the per-row floor markers.
-        const { result, volume } = await runReadOnly(
-          id => withVolume(() => api.listDirChildren(parent, id)),
-          r => r.result?.rows.length ?? 0,
-        );
-        if (isCurrentRequest(seq)) {
-          setRows(result?.rows ?? []);
-          setPartial({ omitted: result?.omitted ?? 0, capped: result?.capped ?? false });
-          setCrumbs(nextCrumbs);
-          setScope(volume ? { volume, range } : null);
-        }
-      } else {
-        const { result: list, volume } = await runReadOnly(
-          id => withVolume(() => api.listTopDirSizes(letter, id)),
-          r => r.result.length,
-        );
-        if (isCurrentRequest(seq)) {
-          setRows(list);
-          setPartial(null);
-          setCrumbs(nextCrumbs);
-          setScope(volume ? { volume, range } : null);
-          // An empty letter means "system drive": resolve it so the selected
-          // state and the capacity summary are correct after any load.
-          setDrive(letter || drives.find((d) => d.is_system)?.letter || drives[0]?.letter || "");
-        }
+      const { result, volume } = await runReadOnly(
+        id => withVolume(async () => {
+          if (!parent) return { rows: await api.listTopDirSizes(letter, id), partial: null };
+          // Only drill-down reports rows dropped by the cutoff and whether the
+          // parent scan was cut short. The top view marks per-row size floors.
+          const children = await api.listDirChildren(parent, id);
+          return {
+            rows: children?.rows ?? [],
+            partial: { omitted: children?.omitted ?? 0, capped: children?.capped ?? false },
+          };
+        }),
+        r => r.result.rows.length,
+      );
+      if (isCurrentRequest(seq)) {
+        setRows(result.rows);
+        setPartial(result.partial);
+        setCrumbs(nextCrumbs);
+        setScope(volume ? { volume, range } : null);
+        setMeasuredAt(Date.now());
+        if (!parent) setDrive(letter || drives.find(d => d.is_system)?.letter || drives[0]?.letter || "");
       }
     } catch (e) {
       if (isCurrentRequest(seq)) {
@@ -212,7 +206,9 @@ export function DiskRadarPanel({
         failedLabel={L.diskRadarFailed}
         foundLabel={L.scanFoundRadar}
       />
-      <DiskRadarComparison scope={scope} rows={rows} busy={busy} onInspect={onInspect} />
+      <DiskRadarComparison scope={scope} rows={rows} measuredAt={measuredAt} busy={busy}
+        stale={progress?.status === "cancelled" || progress?.status === "failed"}
+        onInspect={onInspect && ((row, opener) => onInspect(row, opener, "growth"))} />
       {!crumbs.length && current?.is_system && (
         <div style={{ ...css.muted, fontSize: 12, marginBottom: 6 }}>
           {L.diskRadarRootsHint}

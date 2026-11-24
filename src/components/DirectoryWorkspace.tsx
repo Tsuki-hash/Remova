@@ -9,13 +9,16 @@ import { scanCancelled, useAssociationScan } from "../hooks/useAssociationScan";
 import { cssStyles as css } from "../styles";
 import type { DirSizeRow, FolderReferences, FolderReferenceSource, InstalledApp } from "../types";
 import { AppDetailPanel } from "./AppDetailPanel";
+import { DiskOverviewPanel, RegenerableCacheHint } from "./DiskOverviewPanel";
 import { DiskRadarPanel } from "./DiskRadarPanel";
 import { ScanProgressBar } from "./ScanProgressBar";
 import { BackButton } from "./ui/BackButton";
 import "./DirectoryWorkspace.css";
 
-export type FolderInspection = { path: string; measurement?: DirSizeRow; returnToRadar?: boolean };
+export type FolderInspection = { path: string; measurement?: DirSizeRow; returnToRadar?: boolean; origin?: "growth" };
 type ReturnPosition = { opener: HTMLButtonElement; scroll: { element: HTMLElement; top: number }[] };
+type OpenedDetail = ReturnPosition & { inspection: FolderInspection } &
+  ({ kind: "app"; key: string } | { kind: "cache"; path: string });
 
 function capturePosition(opener: HTMLButtonElement, dialog: HTMLDivElement | null): ReturnPosition {
   const scroll: ReturnPosition["scroll"] = [];
@@ -46,16 +49,17 @@ export function DirectoryWorkspace({
   const radarPosition = useRef<ReturnPosition | null>(null);
   const referencePosition = useRef<ReturnPosition | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [opened, setOpened] = useState<({ inspection: FolderInspection; key: string } & ReturnPosition) | null>(null);
-  const app = opened && opened.inspection === inspection
-    ? apps.find(item => appKey(item) === opened.key)
-    : undefined;
+  const [opened, setOpened] = useState<OpenedDetail | null>(null);
+  const [cacheBusy, setCacheBusy] = useState(false);
+  const detail = opened?.inspection === inspection ? opened : null;
+  const app = detail?.kind === "app" ? apps.find(item => appKey(item) === detail.key) : undefined;
+  const cachePath = detail?.kind === "cache" ? detail.path : null;
   const back = () => {
-    if (app && opened) {
-      referencePosition.current = opened;
+    if (cacheBusy) return;
+    if (detail && (app || cachePath !== null)) {
+      referencePosition.current = detail;
       setOpened(null);
-    }
-    else if (inspection && radar) onBack();
+    } else if (inspection && radar) onBack();
     else onClose();
   };
   useDialogFocus(true, dialog, dialogLayer.overview, back);
@@ -70,7 +74,7 @@ export function DirectoryWorkspace({
       if (dialog.current) dialog.current.scrollTop = 0;
       backButton.current?.focus();
     }
-  }, [inspection, app, radar]);
+  }, [inspection, app, cachePath, radar]);
 
   const openPath = (path: string) => {
     setError(null);
@@ -80,31 +84,36 @@ export function DirectoryWorkspace({
     <div className="directory-backdrop" style={{ zIndex: dialogLayer.overview }}>
       <div className="directory-dialog" ref={dialog} role="dialog" aria-modal="true" aria-labelledby={title} tabIndex={-1}>
         <header className="directory-heading">
-          <h2 id={title}>{app ? L.folderInspectShowApp : inspection ? L.folderInspectTitle : L.diskRadarShortcut}</h2>
-          <BackButton ref={backButton} onClick={back}
-            label={app ? L.folderInspectBack : inspection && (radar || inspection.returnToRadar) ? L.folderInspectRadar : L.returnSoftwareList} />
+          <h2 id={title}>{cachePath !== null ? L.regenTitle : app ? L.folderInspectShowApp
+            : inspection ? L.folderInspectTitle : L.diskRadarShortcut}</h2>
+          <BackButton ref={backButton} onClick={back} disabled={cacheBusy}
+            label={app || cachePath !== null ? L.folderInspectBack
+              : inspection && (radar || inspection.returnToRadar) ? L.folderInspectRadar : L.returnSoftwareList} />
         </header>
         {error && <p role="alert" className="folder-reference-incomplete">{error}</p>}
         {radar && (
           <div className="directory-radar-view" hidden={Boolean(inspection)}>
             <DiskRadarPanel
               onError={setError}
-              onInspect={(row, opener) => {
+              onInspect={(row, opener, origin) => {
                 radarPosition.current = capturePosition(opener, dialog.current);
-                onInspect({ path: row?.path ?? "", measurement: row });
+                onInspect({ path: row?.path ?? "", measurement: row, origin });
               }}
             />
           </div>
         )}
         {inspection && (
-          <div hidden={Boolean(app)}>
+          <div hidden={Boolean(app || cachePath !== null)}>
             <FolderReferencePanel key={inspection.path} inspection={inspection} apps={apps}
               onInspect={path => onInspect({ path, returnToRadar: inspection.returnToRadar })}
               onOpenPath={openPath}
-              onApp={(item, opener) => setOpened({ inspection, key: appKey(item), ...capturePosition(opener, dialog.current) })}
+              onApp={(item, opener) => setOpened({ kind: "app", inspection, key: appKey(item), ...capturePosition(opener, dialog.current) })}
+              onCache={(path, opener) => setOpened({ kind: "cache", inspection, path, ...capturePosition(opener, dialog.current) })}
             />
           </div>
         )}
+        {cachePath !== null && <DiskOverviewPanel key={cachePath} focusCachePath={cachePath}
+          onClose={back} onCacheBusy={setCacheBusy} />}
         {app && (
           <AppDetailPanel
             app={app}
@@ -122,16 +131,17 @@ export function DirectoryWorkspace({
 }
 
 function FolderReferencePanel({
-  inspection, apps, onInspect, onOpenPath, onApp,
+  inspection, apps, onInspect, onOpenPath, onApp, onCache,
 }: {
   inspection: FolderInspection;
   apps: InstalledApp[];
   onInspect: (path: string) => void;
   onOpenPath: (path: string) => void;
   onApp: (app: InstalledApp, opener: HTMLButtonElement) => void;
+  onCache: (path: string, opener: HTMLButtonElement) => void;
 }) {
   const L = t();
-  const { path, measurement } = inspection;
+  const { path, measurement, origin } = inspection;
   const [input, setInput] = useState(path);
   const [result, setResult] = useState<FolderReferences | null>(null);
   const [checkedOnCancel, setCheckedOnCancel] = useState<FolderReferenceSource[]>([]);
@@ -212,15 +222,19 @@ function FolderReferencePanel({
         <button type="submit" style={css.btn} disabled={running && input.trim() === path}>{L.folderInspectRun}</button>
       </form>
       <p className="folder-reference-note">{L.folderInspectScope}</p>
+      {origin === "growth" && <p className="folder-reference-note">{L.diskRadarGrowthReferences}</p>}
       {pickerFailed && <p role="alert">{L.folderInspectPickerFailed}</p>}
       {path && (
-        <div className="folder-reference-path">
-          <code>{path}</code>
-          {measurement && <span>{measurement.capped
-            ? L.detailSizeFloor(formatSize(measurement.size_kb))
-            : formatSize(measurement.size_kb)}</span>}
-          {result && <button type="button" style={css.btnGhost} onClick={() => onOpenPath(path)}>{L.openLocation}</button>}
-        </div>
+        <>
+          <div className="folder-reference-path">
+            <code>{path}</code>
+            {measurement && <span>{measurement.capped
+              ? L.detailSizeFloor(formatSize(measurement.size_kb))
+              : formatSize(measurement.size_kb)}</span>}
+            {(result || origin === "growth") && <button type="button" style={css.btnGhost} onClick={() => onOpenPath(path)}>{L.openLocation}</button>}
+          </div>
+          {origin === "growth" && <div style={{ marginBlock: 8 }}><RegenerableCacheHint path={path} onOpen={onCache} /></div>}
+        </>
       )}
       {running && <ScanProgressBar progress={progress} onCancel={cancel} />}
       {/* Keep the live region present before the result arrives. */}

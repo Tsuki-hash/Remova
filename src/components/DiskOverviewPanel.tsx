@@ -98,12 +98,13 @@ const scanDirectories = sharePendingScan(api.spaceTriage);
 const scanCaches = sharePendingScan(api.regenerableLayouts);
 const scanComponentStore = sharePendingScan(api.analyzeComponentStore);
 
-function useDiskScan<T>(scan: () => Promise<T>) {
+function useDiskScan<T>(scan: (() => Promise<T>) | null) {
   const [state, setState] = useState<{ data: T | null; pending: boolean; error: string | null }>({
-    data: null, pending: true, error: null,
+    data: null, pending: scan !== null, error: null,
   });
   const { next, isCurrent, invalidate } = useRequestSeq();
   const reload = useCallback(async () => {
+    if (!scan) return;
     const id = next();
     setState({ data: null, pending: true, error: null });
     try {
@@ -118,6 +119,31 @@ function useDiskScan<T>(scan: () => Promise<T>) {
     return invalidate;
   }, [invalidate, reload]);
   return { ...state, reload };
+}
+
+function useRegenerableScan(path?: string) {
+  const scan = useCallback(() => path === undefined ? scanCaches() : api.regenerableLayouts(path), [path]);
+  return useDiskScan(scan);
+}
+
+export function RegenerableCacheHint({ path, onOpen }: {
+  path: string;
+  onOpen: (path: string, opener: HTMLButtonElement) => void;
+}) {
+  const L = t();
+  const scan = useRegenerableScan(path);
+  const item = scan.data?.items.find(item => item.path === path);
+  if (scan.pending) return <p role="status" className="remova-tool-note">{L.diskRadarCacheChecking}</p>;
+  if (scan.error) return <p className="remova-tool-note">
+    <span role="status">{L.diskRadarCacheCheckFailed}</span>{" "}
+    <button type="button" style={css.btnGhost} onClick={() => void scan.reload()}>{L.retry}</button>
+  </p>;
+  if (!item) return <p className="remova-tool-note">{L.diskRadarCacheUnavailable}</p>;
+  if (!item.deletable) return <p className="remova-tool-note">{
+    item.block_reason === "servicing_busy" ? L.regenBlockServicing : L.diskRadarCacheUnavailable
+  }</p>;
+  return <button type="button" style={css.btnGhost}
+    onClick={event => onOpen(item.path, event.currentTarget)}>{L.diskRadarCacheOpen}</button>;
 }
 
 /** One row of the merged action list: triage classification + its delete gate. */
@@ -151,31 +177,37 @@ function cleanupSizeKb(row: CleanupRow): number {
 export function DiskOverviewPanel({
   onClose,
   onMigrate,
+  focusCachePath,
+  onCacheBusy,
 }: {
   onClose: () => void;
   onMigrate?: (path: string) => void;
+  focusCachePath?: string;
+  onCacheBusy?: (busy: boolean) => void;
 }) {
   const L = t();
-  const [tab, setTab] = useState<OverviewTab>("overview");
-  const volumeScan = useDiskScan(scanVolumes);
-  const junctionScan = useDiskScan(scanJunctions);
-  const triageScan = useDiskScan(scanDirectories);
-  const regenScan = useDiskScan(scanCaches);
+  const focused = focusCachePath !== undefined;
+  const [tab, setTab] = useState<OverviewTab>(focused ? "cleanup" : "overview");
+  const volumeScan = useDiskScan(focused ? null : scanVolumes);
+  const junctionScan = useDiskScan(focused ? null : scanJunctions);
+  const triageScan = useDiskScan(focused ? null : scanDirectories);
+  const regenScan = useRegenerableScan(focusCachePath);
   const drives = volumeScan.data;
   const junction = junctionScan.data;
   const triage = triageScan.data;
-  const regen = regenScan.data;
+  const cacheItems = regenScan.data?.items.filter(item => !focused || item.path === focusCachePath) ?? [];
   const [regenSel, setRegenSel] = useState<Set<string>>(new Set());
   const [regenBusy, setRegenBusy] = useState(false);
   const [dismBusy, setDismBusy] = useState(() => Boolean(scanComponentStore.pending()));
   const [dism, setDism] = useState<ComponentStoreAnalysis | null>(null);
   const { next: nextDism, isCurrent: isCurrentDism, invalidate: invalidateDism } = useRequestSeq();
 
-  const scans = [
+  const cacheScan = { ...regenScan, label: L.diskOverviewStepCaches };
+  const scans = focused ? [cacheScan] : [
     { ...volumeScan, label: L.diskOverviewStepVolume },
     { ...junctionScan, label: L.diskOverviewStepJunctions },
     { ...triageScan, label: L.diskOverviewStepDirectories },
-    { ...regenScan, label: L.diskOverviewStepCaches },
+    cacheScan,
   ];
   const failed = scans.filter(scan => scan.error);
   const pending = scans.filter(scan => scan.pending);
@@ -202,10 +234,11 @@ export function DiskOverviewPanel({
   }, [isCurrentDism, nextDism]);
 
   useEffect(() => {
+    if (focused) return;
     const pendingRequest = scanComponentStore.pending();
     if (pendingRequest) void receiveDism(pendingRequest);
     return invalidateDism;
-  }, [invalidateDism, receiveDism]);
+  }, [focused, invalidateDism, receiveDism]);
 
   const runDism = () => {
     if (dismBusy) return;
@@ -229,12 +262,11 @@ export function DiskOverviewPanel({
     void api.openPath(path).catch((e) => toast.error(formatError(e)));
   };
 
-  const deletableItems = regen?.items.filter((i) => i.deletable) ?? [];
+  const deletableItems = cacheItems.filter((i) => i.deletable);
   const allSelected = deletableItems.length > 0 && deletableItems.every((i) => regenSel.has(i.path));
 
-  // The triage list and the regenerable list described the same layouts twice.
-  // Merge them: every triage row carries its delete gate; any regenerate
-  // layout the triage scan did not list is appended so nothing disappears.
+  // Merge the triage rows with their cache cleanup gates, keeping cache
+  // layouts even when the triage scan did not list them.
   const triageEntries = triage?.entries ?? [];
   const rows: CleanupRow[] = [
     ...triageEntries.map((e: TriageEntry) => ({
@@ -242,10 +274,9 @@ export function DiskOverviewPanel({
       cls: e.class,
       reason: e.reason,
       sizeKb: e.size_kb,
-      regen:
-        regen?.items.find((i) => i.path.toLowerCase() === e.path.toLowerCase()) ?? null,
+      regen: cacheItems.find((i) => i.path.toLowerCase() === e.path.toLowerCase()) ?? null,
     })),
-    ...(regen?.items ?? [])
+    ...cacheItems
       .filter(
         (i) => !triageEntries.some((e) => e.path.toLowerCase() === i.path.toLowerCase()),
       )
@@ -265,18 +296,21 @@ export function DiskOverviewPanel({
   );
 
   const cleanRegen = async (chosenPaths?: string[]) => {
-    const chosen = chosenPaths ?? [...regenSel];
+    const requested = chosenPaths ?? [...regenSel];
+    const selected = deletableItems.filter(item => requested.includes(item.path));
+    const chosen = selected.map(item => item.path);
     if (!chosen.length || regenBusy) return;
-    const totalKb =
-      regen?.items.filter((i) => chosen.includes(i.path)).reduce((s, i) => s + i.size_kb, 0) ?? 0;
+    const totalKb = selected.reduce((sum, item) => sum + item.size_kb, 0);
+    const message = L.regenCleanConfirm(chosen.length, totalKb === 0 ? "0 KB" : formatSize(totalKb));
     const { ok } = await requestConfirmEx({
       title: L.regenTitle,
-      message: L.regenCleanConfirm(chosen.length, formatSize(totalKb)),
+      message: focused ? `${message}\n\n${chosen[0]}` : message,
       confirmLabel: L.regenClean,
       danger: true,
     });
     if (!ok) return;
     setRegenBusy(true);
+    onCacheBusy?.(true);
     try {
       const report = await api.deleteRegenerableLayouts(chosen);
       if (report.skipped.length) {
@@ -293,6 +327,7 @@ export function DiskOverviewPanel({
       toast.error(backendErrorText(formatError(e)));
     } finally {
       setRegenBusy(false);
+      onCacheBusy?.(false);
     }
   };
 
@@ -315,11 +350,14 @@ export function DiskOverviewPanel({
   } as const;
 
   return (
-    <section style={{ ...css.card, marginBottom: 16, padding: 16, fontSize: 13 }} aria-label={L.diskOverviewTitle}>
-      <div className="remova-tool-heading">
+    <section style={{ ...css.card, marginBottom: 16, padding: 16, fontSize: 13 }} aria-label={focused ? L.regenTitle : L.diskOverviewTitle}>
+      {focused ? <>
+        <code style={{ overflowWrap: "anywhere" }}>{focusCachePath}</code>
+        <p className="remova-tool-note">{L.diskRadarCachePreview}</p>
+      </> : <div className="remova-tool-heading">
         <h2>{L.diskOverviewTitle}</h2>
         <BackButton onClick={onClose} style={{ marginLeft: "auto" }} />
-      </div>
+      </div>}
 
       {pending.length > 0 && (
         <div style={{ padding: "8px 10px", borderRadius: 8, background: "var(--surface-2)", marginBottom: 8 }}>
@@ -343,7 +381,7 @@ export function DiskOverviewPanel({
         </div>
       )}
 
-      <div
+      {!focused && <div
         role="tablist"
         aria-label={L.diskOverviewTitle}
         onKeyDown={(e) => {
@@ -392,7 +430,7 @@ export function DiskOverviewPanel({
             </button>
           );
         })}
-      </div>
+      </div>}
 
       {tab === "overview" && (
         <div id="disk-overview-panel-overview" role="tabpanel" aria-labelledby="disk-overview-tab-overview" aria-label={L.diskOverviewTabOverview}>
@@ -482,10 +520,12 @@ export function DiskOverviewPanel({
       )}
 
       {tab === "cleanup" && (
-        <div id="disk-overview-panel-cleanup" role="tabpanel" aria-labelledby="disk-overview-tab-cleanup" aria-label={L.diskOverviewTabCleanup}>
-          {rows.length > 0 && <p className="remova-tool-note">{L.triageHint}</p>}
+        <div id={focused ? undefined : "disk-overview-panel-cleanup"} role={focused ? undefined : "tabpanel"}
+          aria-labelledby={focused ? undefined : "disk-overview-tab-cleanup"}>
+          {rows.length > 0 && <p className="remova-tool-note">{focused ? L.regenHint : L.triageHint}</p>}
           {rows.length === 0 ? (
-            !cleanupPending && !triageScan.error && !regenScan.error && <p style={css.muted}>{L.diskOverviewEmpty}</p>
+            !cleanupPending && !triageScan.error && !regenScan.error &&
+              <p role={focused ? "status" : undefined} style={css.muted}>{focused ? L.diskRadarCacheUnavailable : L.diskOverviewEmpty}</p>
           ) : (
             <>
               <div
@@ -513,7 +553,8 @@ export function DiskOverviewPanel({
                       role="listitem"
                       title={triageReasonText(L, row.reason)}
                       style={{
-                        display: "grid",
+                        display: focused ? "flex" : "grid",
+                        flexWrap: "wrap",
                         gridTemplateColumns: "18px 18px minmax(0, 1fr) 120px 72px 84px",
                         columnGap: 8,
                         padding: "5px 8px",
@@ -536,13 +577,14 @@ export function DiskOverviewPanel({
                       )}
                       <LocalItemIcon path={row.path} kind="dir" size={18} />
                       <span
-                        className="ell"
+                        className={focused ? undefined : "ell"}
                         style={{
                           minWidth: 0,
+                          ...(focused && { flex: "1 1 140px", overflowWrap: "anywhere" }),
                           color: row.regen && !row.regen.deletable ? "var(--muted)" : "var(--fg)",
                         }}
                       >
-                        {row.path}
+                        {focused ? triageReasonText(L, row.reason) : row.path}
                         {blocked && <span style={css.muted}> — {L.regenBlockServicing}</span>}
                       </span>
                       <span style={{ color: tone, whiteSpace: "nowrap", fontSize: 11.5 }}>{label}</span>
@@ -553,7 +595,9 @@ export function DiskOverviewPanel({
                           whiteSpace: "nowrap",
                         }}
                       >
-                        {sizeKb !== null ? formatSize(sizeKb) : "—"}
+                        {sizeKb === null ? "—" : focused && row.regen?.size_capped
+                          ? L.diskRadarCacheSizeFloor(sizeKb === 0 ? "0 KB" : formatSize(sizeKb))
+                          : focused && sizeKb === 0 ? "0 KB" : formatSize(sizeKb)}
                       </span>
                       <div
                         style={{
@@ -563,7 +607,7 @@ export function DiskOverviewPanel({
                           justifyContent: "flex-end",
                         }}
                       >
-                        {cleanable && (
+                        {!focused && cleanable && (
                           <button
                             type="button"
                             style={{ ...css.btnGhost, height: 24, padding: "0 8px", fontSize: 11, flexShrink: 0, color: "var(--danger-text)" }}
@@ -603,14 +647,14 @@ export function DiskOverviewPanel({
                   {L.scanOmitted(triage.omitted)}
                 </div>
               )}
-              <details style={{ marginTop: 6 }}>
+              {!focused && <details style={{ marginTop: 6 }}>
                 <summary style={{ ...css.muted, fontSize: 12, cursor: "pointer" }}>
                   {L.diskOverviewCleanupRules}
                 </summary>
                 <div style={{ ...css.muted, fontSize: 12, marginTop: 4 }}>{L.regenHint}</div>
-              </details>
+              </details>}
               <div style={{ display: "flex", gap: 8, marginTop: 8, justifyContent: "flex-end" }}>
-                <button
+                {!focused && <button
                   type="button"
                   style={{ ...css.btnGhost, height: 30 }}
                   aria-pressed={allSelected}
@@ -619,7 +663,7 @@ export function DiskOverviewPanel({
                   }
                 >
                   {allSelected ? L.regenClearSelection : L.regenSelectAll}
-                </button>
+                </button>}
                 <button
                   type="button"
                   style={{
