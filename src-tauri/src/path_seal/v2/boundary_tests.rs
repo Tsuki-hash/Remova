@@ -16,18 +16,19 @@ fn plain_len(key: &[u8; 32], data: &Payload) -> usize {
     .len()
 }
 fn near_limit_map(
-    session: &std::path::Path,
+    name: &str,
     key: &[u8; 32],
     size: usize,
 ) -> (BTreeMap<String, String>, BTreeMap<String, String>, Payload) {
-    let name = session.file_name().unwrap().to_str().unwrap();
+    // These targets are serialized but never opened. Do not repeat the runner's
+    // variable-length temp path in every entry of the size-sensitive fixture.
     let mut map: BTreeMap<_, _> = (0..180)
         .map(|i| {
-            let target = session
-                .join("originals")
-                .join(format!("{i:04}_{}", "产品🦀".repeat(50)))
-                .join("payload.bin");
-            (format!("file{i:04}"), target.to_string_lossy().into_owned())
+            let target = format!(
+                r"C:\remova-seal-fixture\originals\{i:04}_{}\payload.bin",
+                "产品🦀".repeat(50)
+            );
+            (format!("file{i:04}"), target)
         })
         .collect();
     let inventory: BTreeMap<_, _> = (0..50)
@@ -67,7 +68,7 @@ fn seal_boundary_native_dpapi_unicode_long_targets_at_plaintext_limit_minus_exac
     ] {
         let session = root.subdir(&format!("1700000000_limit{size}"));
         let name = session.file_name().unwrap().to_str().unwrap();
-        let (map, inventory, data) = near_limit_map(&session, &key, size);
+        let (map, inventory, data) = near_limit_map(name, &key, size);
         if size > MAX_PLAINTEXT_ENVELOPE {
             assert_eq!(
                 encode_blob(&key, &data).unwrap_err(),
