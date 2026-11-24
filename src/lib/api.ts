@@ -105,6 +105,7 @@ export type MonitorDiff = {
   walk_degraded?: boolean;
   recovered_read_only?: boolean;
   trial_read_only?: boolean;
+  trial_history_save_failed?: boolean;
 };
 export type InstallMonitorStatus = "idle" | "active" | "recovered" | "unavailable";
 export type MonitorEndResult = { diff: MonitorDiff; items: CleanupItem[]; scope_revision?: number };
@@ -181,7 +182,7 @@ export const api = {
   /** Disk-space overview: judgement-table triage of anchored roots (read-only). */
   spaceTriage: () => invoke<TriageScanResult>("scan_space_triage"),
   /** Read-only: an optional path narrows the scan to an exact fixed layout. */
-  regenerableLayouts: (path?: string) => invoke<RegenerableScanResult>("scan_regenerable_layouts", { path }),
+  regenerableLayouts: (path?: string, probe?: boolean) => invoke<RegenerableScanResult>("scan_regenerable_layouts", probe ? { path, probe } : { path }),
   /** Delete the contents of regenerable layouts (server re-admits each path). */
   deleteRegenerableLayouts: (paths: string[]) =>
     invoke<RegenerableCleanupReport>("delete_regenerable_layouts", { paths }),

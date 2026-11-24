@@ -37,6 +37,8 @@ pub struct MonitorDiff {
     pub recovered_read_only: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub trial_read_only: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub trial_history_save_failed: bool,
 }
 
 /// Server-side end payload: the diff the user sees plus cleanup items armed only from that diff.
@@ -507,10 +509,11 @@ pub fn end() -> Result<MonitorEndResult, String> {
             reg_value_names,
             || file.load(),
             |trial, diff| {
-                if let Some(trial) = trial {
-                    trial_records::save(trial, diff)?;
-                }
-                file.remove()
+                // A corrupt or unwritable history must not leave the active
+                // comparison stuck. The store refuses to replace unreadable data.
+                let saved = trial.is_none_or(|trial| trial_records::save(trial, diff).is_ok());
+                file.remove()?;
+                Ok(saved)
             },
         )
     }
@@ -520,7 +523,7 @@ pub fn end() -> Result<MonitorEndResult, String> {
         take_fs_snapshot,
         reg_value_names,
         || Ok(None),
-        |_, _| Ok(()),
+        |_, _| Ok(true),
     )
 }
 
@@ -530,7 +533,7 @@ fn end_with(
     files: impl FnOnce() -> FsSnapshot,
     registry: impl FnOnce() -> Result<BTreeSet<String>, String>,
 ) -> Result<MonitorEndResult, String> {
-    end_session(session, files, registry, || Ok(None), |_, _| Ok(()))
+    end_session(session, files, registry, || Ok(None), |_, _| Ok(true))
 }
 
 fn end_session(
@@ -538,7 +541,7 @@ fn end_session(
     files: impl FnOnce() -> FsSnapshot,
     registry: impl FnOnce() -> Result<BTreeSet<String>, String>,
     load_recovery: impl FnOnce() -> Result<Option<FullSnapshot>, String>,
-    finish: impl FnOnce(Option<&trial_records::Trial>, &MonitorDiff) -> Result<(), String>,
+    finish: impl FnOnce(Option<&trial_records::Trial>, &MonitorDiff) -> Result<bool, String>,
 ) -> Result<MonitorEndResult, String> {
     let mut active = session.lock().map_err(|_| "scan:state")?;
     if !crate::scan_task::checkpoint("preparing", 0) {
@@ -564,15 +567,17 @@ fn end_session(
         result.diff.added_files.len() + result.diff.added_reg_values.len(),
     );
     crate::scan_task::commit(|permit| {
+        let mut saved = true;
         let revision = crate::scan_allow::commit_monitor_items(
             permit,
             trusted_monitor_items(&result),
             || {
-                finish(trial.as_ref(), &result.diff)?;
+                saved = finish(trial.as_ref(), &result.diff)?;
                 *active = None;
                 Ok(())
             },
         )?;
+        result.diff.trial_history_save_failed = !saved;
         if !result.diff.walk_degraded
             && !result.diff.recovered_read_only
             && !result.diff.trial_read_only
@@ -612,6 +617,7 @@ fn build_diff(
         walk_degraded: before.fs.truncated || after.truncated || registry_degraded,
         recovered_read_only,
         trial_read_only: false,
+        trial_history_save_failed: false,
     };
     // Allow-list is armed only from this server-computed diff (never from
     // client IPC) — and never from a truncated snapshot: entries missed by
@@ -881,6 +887,38 @@ mod tests {
         other.join().unwrap();
         assert_eq!(completed, Ok(true));
         assert!(session.lock().unwrap().is_some());
+    }
+
+    #[test]
+    fn unavailable_trial_history_finishes_with_a_read_only_comparison() {
+        let _seq = TEST_SEQ.lock().unwrap_or_else(|e| e.into_inner());
+        let _allow = crate::scan_allow::test_lock();
+        let session = Mutex::new(Some(FullSnapshot {
+            fs: Default::default(),
+            reg: Vec::new(),
+            reg_degraded: false,
+            trial: trial_records::Trial::new(Some("Fixture".into())).unwrap(),
+        }));
+        let result = end_session(
+            &session,
+            || FsSnapshot {
+                files: [r"C:\Fixture\ReadOnly.txt".to_owned()].into(),
+                truncated: false,
+            },
+            || Ok(BTreeSet::new()),
+            || Ok(None),
+            |trial, comparison| {
+                assert!(trial.is_some());
+                assert!(comparison.trial_read_only);
+                Ok(false)
+            },
+        )
+        .unwrap();
+        assert!(session.lock().unwrap().is_none());
+        assert!(result.diff.trial_history_save_failed);
+        assert_eq!(result.diff.added_files, [r"C:\Fixture\ReadOnly.txt"]);
+        assert!(result.items.is_empty());
+        assert_eq!(result.scope_revision, None);
     }
 
     #[test]
@@ -1237,6 +1275,7 @@ mod tests {
             walk_degraded: false,
             recovered_read_only: false,
             trial_read_only: false,
+            trial_history_save_failed: false,
         };
         let items = diff_to_cleanup_items(&diff);
         assert_eq!(items.len(), 2);
@@ -1264,6 +1303,7 @@ mod tests {
             walk_degraded: false,
             recovered_read_only: false,
             trial_read_only: false,
+            trial_history_save_failed: false,
         };
         let items = diff_to_cleanup_items(&forged);
         assert_eq!(items.len(), 1);
@@ -1291,6 +1331,7 @@ mod tests {
             walk_degraded: false,
             recovered_read_only: false,
             trial_read_only: false,
+            trial_history_save_failed: false,
         };
         let items = diff_to_cleanup_items(&diff);
         let under_docs = items.iter().find(|i| i.path.ends_with("saves.db")).unwrap();
@@ -1368,6 +1409,7 @@ mod tests {
             walk_degraded: false,
             recovered_read_only: false,
             trial_read_only: false,
+            trial_history_save_failed: false,
         };
         let items = diff_to_cleanup_items(&diff);
         for path in ["cache.db", "config.ini"] {
@@ -1413,6 +1455,7 @@ mod tests {
             walk_degraded: false,
             recovered_read_only: false,
             trial_read_only: false,
+            trial_history_save_failed: false,
         };
         let items = diff_to_cleanup_items(&diff);
         assert_eq!(items.len(), 3);

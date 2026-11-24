@@ -9,7 +9,7 @@ export function cleanupItemReasonText(message: string, L: Strings): string {
   if (known !== L.backendDetailUnavailable) return known;
   if (/os error (32|33)\b|sharing violation|being used by another process|另一个进程|另一进程/i.test(message)) return L.reportFileBusy;
   if (/os error 5\b|access is denied|permission denied|拒绝访问/i.test(message)) return L.reportPermissionDenied;
-  if (/os error (2|3)\b|not found|cannot find|找不到/i.test(message)) return L.reasonPathMissing;
+  if (/\bos error (2|3)\b/i.test(message)) return L.reasonPathMissing;
   return known;
 }
 

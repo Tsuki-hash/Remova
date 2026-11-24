@@ -58,6 +58,22 @@ function mockDrives() {
 }
 
 describe("DiskRadarPanel", () => {
+  it("recovers the drive identity and clears stale scan errors after refresh", async () => {
+    mockDrives();
+    vi.mocked(api.listLocalDrives).mockRejectedValueOnce(new Error("drive query failed"));
+    vi.mocked(api.listTopDirSizes).mockRejectedValueOnce(new Error("scan failed")).mockResolvedValue([]);
+    render(<DiskRadarPanel />);
+    const reload = screen.getByRole("button", { name: t().manageReload });
+    expect((await screen.findByRole("alert")).textContent).toContain("drive query failed");
+    fireEvent.click(reload);
+    await screen.findByText(/scan failed/);
+    expect(api.listLocalDrives).toHaveBeenCalledTimes(2);
+    fireEvent.click(reload);
+    await screen.findByText(t().radarEmpty);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("button", { name: "C:" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
   it("shows a capped row as a floor with the entry count", async () => {
     mockDrives();
     vi.mocked(api.listTopDirSizes).mockResolvedValue([

@@ -66,13 +66,14 @@ const cache: RegenerableItem = {
 
 it("opens a fresh, unselected cache preview and restores focus and scroll on both returns", async () => {
   const L = t();
-  growingFolder(cache.path);
+  const radarPath = cache.path.toUpperCase();
+  growingFolder(radarPath);
   vi.mocked(api.regenerableLayouts)
-    .mockResolvedValueOnce({ items: [cache], omitted: 0 })
+    .mockResolvedValueOnce({ items: [cache], omitted: 0, resolved_path: cache.path })
     .mockResolvedValueOnce({ items: [{ ...cache, size_kb: 160, size_capped: true },
       { ...cache, path: "D:\\Users\\Example\\AppData\\Local\\Temp" }], omitted: 0 });
   render(<Fixture />);
-  const growth = await screen.findByRole("button", { name: `${L.diskRadarInspectGrowth}: ${cache.path}` });
+  const growth = await screen.findByRole("button", { name: `${L.diskRadarInspectGrowth}: ${radarPath}` });
   const dialog = screen.getByRole("dialog", { name: L.diskRadarShortcut });
   dialog.scrollTo = (options?: ScrollToOptions | number) => {
     dialog.scrollTop = typeof options === "object" ? options.top ?? 0 : 0;
@@ -81,7 +82,7 @@ it("opens a fresh, unselected cache preview and restores focus and scroll on bot
   dialog.scrollTop = 120;
   fireEvent.click(growth);
   const shortcut = await screen.findByRole("button", { name: L.diskRadarCacheOpen });
-  expect(api.regenerableLayouts).toHaveBeenNthCalledWith(1, cache.path);
+  expect(api.regenerableLayouts).toHaveBeenNthCalledWith(1, radarPath, true);
   dialog.scrollTop = 55;
   fireEvent.click(shortcut);
 
@@ -97,7 +98,9 @@ it("opens a fresh, unselected cache preview and restores focus and scroll on bot
 
   fireEvent.click(selection);
   fireEvent.click(clean);
-  expect(getConfirm()?.message).toContain(cache.path);
+  expect(getConfirm()?.message).toBe(`${L.regenCleanConfirmFloor(1, "160 KB")}
+
+${cache.path}`);
   expect(api.deleteRegenerableLayouts).not.toHaveBeenCalled();
   await act(async () => { settleConfirm(false); });
   expect(api.deleteRegenerableLayouts).not.toHaveBeenCalled();

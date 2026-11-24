@@ -121,8 +121,20 @@ function useDiskScan<T>(scan: (() => Promise<T>) | null) {
   return { ...state, reload };
 }
 
-function useRegenerableScan(path?: string) {
-  const scan = useCallback(() => path === undefined ? scanCaches() : api.regenerableLayouts(path), [path]);
+const targetedScans = new Map<string, Promise<RegenerableScanResult>>();
+
+function scanCachePath(path: string, probe: boolean) {
+  const key = JSON.stringify([path, probe]);
+  const pending = targetedScans.get(key);
+  if (pending) return pending;
+  const request = (probe ? api.regenerableLayouts(path, true) : api.regenerableLayouts(path))
+    .finally(() => targetedScans.delete(key));
+  targetedScans.set(key, request);
+  return request;
+}
+
+function useRegenerableScan(path?: string, probe = false) {
+  const scan = useCallback(() => path === undefined ? scanCaches() : scanCachePath(path, probe), [path, probe]);
   return useDiskScan(scan);
 }
 
@@ -131,8 +143,8 @@ export function RegenerableCacheHint({ path, onOpen }: {
   onOpen: (path: string, opener: HTMLButtonElement) => void;
 }) {
   const L = t();
-  const scan = useRegenerableScan(path);
-  const item = scan.data?.items.find(item => item.path === path);
+  const scan = useRegenerableScan(path, true);
+  const item = scan.data?.items.find(item => item.path === (scan.data?.resolved_path ?? path));
   if (scan.pending) return <p role="status" className="remova-tool-note">{L.diskRadarCacheChecking}</p>;
   if (scan.error) return <p className="remova-tool-note">
     <span role="status">{L.diskRadarCacheCheckFailed}</span>{" "}
@@ -316,24 +328,29 @@ export function DiskOverviewPanel({
     const chosen = selected.map(item => item.path);
     if (!chosen.length || regenBusy) return;
     const totalKb = selected.reduce((sum, item) => sum + item.size_kb, 0);
-    const message = L.regenCleanConfirm(chosen.length, totalKb === 0 ? "0 KB" : formatSize(totalKb));
-    const { ok } = await requestConfirmEx({
-      title: L.regenTitle,
-      message: focused ? `${message}\n\n${chosen[0]}` : message,
-      confirmLabel: L.regenClean,
-      danger: true,
-    });
-    if (!ok) return;
+    const size = totalKb === 0 ? "0 KB" : formatSize(totalKb);
+    const message = selected.some(item => item.size_capped)
+      ? L.regenCleanConfirmFloor(chosen.length, totalKb ? size : null)
+      : L.regenCleanConfirm(chosen.length, size);
     setRegenBusy(true);
     onCacheBusy?.(true);
     try {
+      const { ok } = await requestConfirmEx({
+        title: L.regenTitle,
+        message: focused ? `${message}\n\n${chosen[0]}` : message,
+        confirmLabel: L.regenClean,
+        danger: true,
+      });
+      if (!ok) return;
       const report = await api.deleteRegenerableLayouts(chosen);
       if (report.skipped.length) {
         toast.error(L.regenSkipped(report.skipped.length), {
           detail: report.skipped.map((s) => `${s.path}: ${s.message}`).join("\n"),
         });
       }
-      if (report.cleaned.length) {
+      if (report.reclaimed_kb === null) {
+        toast.info(L.regenReclaimedUnknown(report.cleaned.length));
+      } else if (report.cleaned.length) {
         toast.success(L.regenDone(report.cleaned.length, formatSize(report.reclaimed_kb)));
       }
       setRegenSel(new Set());
@@ -708,7 +725,8 @@ export function DiskOverviewPanel({
               {L.diskOverviewWinSxsResult(
                 dism.actual_size_bytes !== null ? gb(dism.actual_size_bytes / 1024 ** 3) : "?",
                 dism.explorer_size_bytes !== null ? gb(dism.explorer_size_bytes / 1024 ** 3) : "?",
-                dism.cleanup_recommended ? L.diskOverviewRecommendedYes : L.diskOverviewRecommendedNo,
+                dism.cleanup_recommended === null ? L.diskOverviewRecommendedUnknown
+                  : dism.cleanup_recommended ? L.diskOverviewRecommendedYes : L.diskOverviewRecommendedNo,
               )}
             </div>
           )}

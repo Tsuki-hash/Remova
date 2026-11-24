@@ -35,6 +35,8 @@ pub struct RegenerableScanResult {
     pub items: Vec<RegenerableItem>,
     #[serde(default)]
     pub omitted: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_path: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -48,8 +50,8 @@ pub struct RegenerableCleanupReport {
     /// Layout roots whose contents were removed (the directory itself is kept).
     pub cleaned: Vec<String>,
     pub skipped: Vec<RegenerableSkipped>,
-    /// before − after across cleaned roots; underestimates when files locked.
-    pub reclaimed_kb: i64,
+    /// Estimated space change; unknown if an attempted layout was incomplete.
+    pub reclaimed_kb: Option<i64>,
 }
 
 /// The exact regenerable layouts. Nothing outside this table is ever
@@ -308,7 +310,11 @@ fn matching_layout<'a>(
 }
 
 /// Read-only scan over the same fixed layouts used for deletion admission.
-fn scan_with(layouts: &[(PathBuf, &'static str)], busy: bool) -> RegenerableScanResult {
+fn scan_with(
+    layouts: &[(PathBuf, &'static str)],
+    busy: bool,
+    measure: bool,
+) -> RegenerableScanResult {
     let mut items = Vec::new();
     let mut omitted = 0u32;
     for (path, reason) in layouts {
@@ -325,7 +331,11 @@ fn scan_with(layouts: &[(PathBuf, &'static str)], busy: bool) -> RegenerableScan
             omitted += 1;
             continue;
         }
-        let (size_kb, size_capped) = crate::fsutil::pinned_scan_size(root);
+        let (size_kb, size_capped) = if measure {
+            crate::fsutil::pinned_scan_size(root)
+        } else {
+            (0, true)
+        };
         let cbs = *reason == "cbs_temp";
         items.push(RegenerableItem {
             path: path.to_string_lossy().into_owned(),
@@ -340,7 +350,11 @@ fn scan_with(layouts: &[(PathBuf, &'static str)], busy: bool) -> RegenerableScan
             },
         });
     }
-    RegenerableScanResult { items, omitted }
+    RegenerableScanResult {
+        items,
+        omitted,
+        resolved_path: None,
+    }
 }
 
 /// Check the entire request before deleting any contents, then keep the normal
@@ -376,7 +390,10 @@ fn delete_with(
         };
         selected.push((path, *reason, pins));
     }
-    let mut report = RegenerableCleanupReport::default();
+    let mut report = RegenerableCleanupReport {
+        reclaimed_kb: Some(0),
+        ..Default::default()
+    };
     for (path, reason, pins) in selected {
         let display = path.to_string_lossy().into_owned();
         let Some(root) = pins.as_ref().and_then(|pins| pins.last()) else {
@@ -386,7 +403,6 @@ fn delete_with(
             });
             continue;
         };
-        let (before, _) = crate::fsutil::pinned_scan_size(root);
         if reason == "cbs_temp" && servicing_blocked() {
             report.skipped.push(RegenerableSkipped {
                 path: display,
@@ -394,9 +410,17 @@ fn delete_with(
             });
             continue;
         }
+        let before = report
+            .reclaimed_kb
+            .map(|_| crate::fsutil::pinned_scan_size(root));
         let result = crate::fsutil::remove_regenerable_contents(root, path);
-        let (after, _) = crate::fsutil::pinned_scan_size(root);
-        report.reclaimed_kb += (before - after).max(0);
+        report.reclaimed_kb = match (report.reclaimed_kb, before, result.is_ok()) {
+            (Some(total), Some((before, false)), true) => {
+                let (after, capped) = crate::fsutil::pinned_scan_size(root);
+                (!capped).then(|| total.saturating_add(before.saturating_sub(after).max(0)))
+            }
+            _ => None,
+        };
         match result {
             Ok(()) => report.cleaned.push(display),
             Err(error) => report.skipped.push(RegenerableSkipped {
@@ -408,19 +432,67 @@ fn delete_with(
     Ok(report)
 }
 
-fn restrict_layouts(layouts: &mut Vec<(PathBuf, &'static str)>, target: Option<&str>) {
-    if let Some(target) = target {
-        // A radar row is evidence about its exact path, not a case-folded
-        // alias that might resolve to a different directory on Windows.
-        layouts.retain(|(path, _)| path.as_os_str() == std::ffi::OsStr::new(target));
+fn directory_identity(pins: &[crate::fsutil::DirPin]) -> Option<(u32, u64)> {
+    #[cfg(windows)]
+    {
+        let root = pins
+            .last()
+            .filter(|pin| crate::fsutil::is_plain_pinned_directory(pin))?;
+        root.file_identity().ok()
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = pins;
+        None
     }
 }
 
-pub fn scan_regenerable(target: Option<&str>) -> Result<RegenerableScanResult, String> {
+fn restrict_layouts(
+    layouts: &mut Vec<(PathBuf, &'static str)>,
+    target: &Path,
+    pins: &[crate::fsutil::DirPin],
+) {
+    let Some(wanted) = directory_identity(pins) else {
+        layouts.clear();
+        return;
+    };
+    let same_drive = |path: &Path| {
+        path.to_str()
+            .and_then(|path| path.as_bytes().get(..2))
+            .map(|prefix| [prefix[0].to_ascii_uppercase(), prefix[1]])
+    };
+    layouts.retain(|(path, _)| {
+        // File IDs are volume-relative; the drive check also rules out serial
+        // and ID duplicates across different cloned disks.
+        same_drive(path) == same_drive(target)
+            && crate::fsutil::pin_local_scan_path(path)
+                .ok()
+                .and_then(|pins| directory_identity(&pins))
+                == Some(wanted)
+    });
+    layouts.truncate(1);
+}
+
+pub fn scan_regenerable(
+    target: Option<&str>,
+    probe: bool,
+) -> Result<RegenerableScanResult, String> {
     let mut layouts = system_layouts()?;
-    restrict_layouts(&mut layouts, target);
+    // Keep the requested chain pinned while measuring the fixed layout. The
+    // reported path always originates in the fixed layout table, not the caller.
+    let _target_pins = if let Some(target) = target {
+        let pins = crate::fsutil::pin_local_scan_path(Path::new(target)).unwrap_or_default();
+        restrict_layouts(&mut layouts, Path::new(target), &pins);
+        Some(pins)
+    } else {
+        None
+    };
     let busy = layouts.iter().any(|(_, reason)| *reason == "cbs_temp") && servicing_busy_cached();
-    Ok(scan_with(&layouts, busy))
+    let mut result = scan_with(&layouts, busy, !probe);
+    if target.is_some() {
+        result.resolved_path = result.items.first().map(|item| item.path.clone());
+    }
+    Ok(result)
 }
 
 /// Admit only fixed layouts from Windows and delete through the held roots.
@@ -500,27 +572,22 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
     #[test]
-    fn radar_target_only_selects_the_exact_fixed_path() {
-        let exact = r"D:\Windows\Temp";
-        let fixtures = vec![
-            (PathBuf::from(exact), "win_temp"),
-            (PathBuf::from(r"D:\User\Temp"), "user_temp"),
-        ];
-        let mut layouts = fixtures.clone();
-        restrict_layouts(&mut layouts, None);
-        assert_eq!(layouts, fixtures);
-        restrict_layouts(&mut layouts, Some(exact));
-        assert_eq!(layouts, vec![(PathBuf::from(exact), "win_temp")]);
-        for target in [
-            r"D:\Elsewhere\Temp",
-            r"D:\Windows\Temp\Child",
-            r"D:\Windows\temp",
-            "",
+    fn radar_target_requires_the_same_fixed_directory_object() {
+        let tmp = crate::test_support::TempDir::new("regenclean-identity");
+        let fixed = tmp.subdir("Temp");
+        let other = tmp.subdir("other");
+        let fixtures = vec![(fixed, "win_temp")];
+        for (target, matches) in [
+            (tmp.join("TEMP"), true),
+            (other, false),
+            (tmp.join("missing"), false),
         ] {
+            let pins = crate::fsutil::pin_local_scan_path(&target).unwrap_or_default();
             let mut layouts = fixtures.clone();
-            restrict_layouts(&mut layouts, Some(target));
-            assert!(layouts.is_empty());
+            restrict_layouts(&mut layouts, &target, &pins);
+            assert_eq!(!layouts.is_empty(), matches, "{target:?}");
         }
     }
 
@@ -531,9 +598,10 @@ mod tests {
         std::fs::create_dir_all(&cbs).unwrap();
         std::fs::write(cbs.join("pending.xml"), b"x").unwrap();
         let layouts = vec![(cbs.clone(), "cbs_temp")];
-        let idle = scan_with(&layouts, false);
+        let idle = scan_with(&layouts, false, true);
         assert!(idle.items[0].deletable);
-        let busy = scan_with(&layouts, true);
+        let busy = scan_with(&layouts, true, false);
+        assert!(busy.items[0].size_capped);
         assert!(!busy.items[0].deletable);
         assert_eq!(
             busy.items[0].block_reason.as_deref(),
@@ -666,7 +734,10 @@ mod tests {
             delete_with(&layouts, || false, &[layout.to_string_lossy().into_owned()]).unwrap();
         assert_eq!(report.cleaned, vec![layout.to_string_lossy().into_owned()]);
         assert!(report.skipped.is_empty());
-        assert!(report.reclaimed_kb > 0, "reclaimed must be counted");
+        assert!(
+            report.reclaimed_kb.is_some_and(|kb| kb > 0),
+            "reclaimed must be counted"
+        );
         assert!(layout.is_dir(), "the layout directory itself is kept");
         assert!(!layout.join("a.bin").exists());
         assert!(!layout.join("sub").exists());
@@ -697,6 +768,10 @@ mod tests {
             .skipped
             .iter()
             .any(|s| s.message.contains("link not followed")));
+        assert!(
+            report.reclaimed_kb.is_none(),
+            "partial removal has unknown reclaim"
+        );
         assert!(layout.join("alias").exists(), "the link must survive");
         assert!(
             elsewhere.join("keep.txt").exists() || elsewhere.is_dir(),

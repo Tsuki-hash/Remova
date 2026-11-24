@@ -83,6 +83,7 @@ export function MonitorPanel({
       </p>}
       {result?.recovered_read_only && <p className="remova-tool-note">{L.monitorRecoveryReadOnly}</p>}
       {result?.trial_read_only && <p className="remova-tool-note">{L.trialReadOnly}</p>}
+      {result?.trial_history_save_failed && <p role="status" className="remova-tool-note">{L.trialHistoryNotSaved}</p>}
       {result && truncated > 0 && (
         <div style={{ ...css.muted, marginTop: 4, fontSize: 12 }}>
           {L.monitorTruncated(result.files_truncated ?? 0, result.reg_truncated ?? 0)}

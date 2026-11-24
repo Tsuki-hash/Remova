@@ -17,7 +17,7 @@ import type { FolderInspection } from "./components/DirectoryWorkspace";
 import type { MorePageHandle } from "./components/MorePage";
 import type { LinkedBucketId } from "./lib/linkedItems";
 import { appKey, scanMatchesApp } from "./lib/appKey";
-import { getConfirm } from "./lib/confirm";
+import { getConfirm, requestConfirm } from "./lib/confirm";
 import { useSizeEstimate } from "./hooks/useSizeEstimate";
 import { useAppFilter } from "./hooks/useAppFilter";
 import { usePendingAnalyze, useDragDropAnalyze } from "./hooks/useAppNavAssist";
@@ -247,6 +247,7 @@ export default function App() {
   );
   const busyRef = useRef(false);
   const morePage = useRef<MorePageHandle>(null);
+  const directoryCacheBusy = useRef(false);
   const [radarOpen, setRadarOpen] = useState(false);
   const [inspection, setInspection] = useState<FolderInspection | null>(null);
   const directoryOpen = radarOpen || inspection !== null;
@@ -594,7 +595,7 @@ export default function App() {
       if (!getConfirm()) void analyze(a);
     },
     onUnmatched: path => {
-      if (!busyRef.current && !scanning && !getConfirm()) {
+      if (!directoryCacheBusy.current && !busyRef.current && !scanning && !getConfirm()) {
         setInspection(current => ({ path, returnToRadar: current?.returnToRadar }));
       }
     },
@@ -968,7 +969,12 @@ export default function App() {
               onMonitorToCleanup={() => monitorDiff && void monitorDiffToCleanup(monitorDiff)}
               onDismissMonitor={() => residualActions.setMonitorDiff(null)}
               onExportReport={() => {
-                if (lastReport) exportHtmlReport(lastReport, L);
+                if (!lastReport) return;
+                void requestConfirm({
+                  title: L.exportReport,
+                  message: L.exportReportPrivacy,
+                  confirmLabel: L.exportReport,
+                }).then(ok => { if (ok) exportHtmlReport(lastReport, L); });
               }}
               onError={core.setError}
               onCheckUpdate={() => void checkUpdateNow(setUpdateInfo, L)}
@@ -1010,6 +1016,7 @@ export default function App() {
             inspection={inspection}
             apps={apps}
             onInspect={setInspection}
+            onCacheBusy={busy => { directoryCacheBusy.current = busy; }}
             onBack={() => setInspection(null)}
             onClose={() => { setRadarOpen(false); setInspection(null); }}
             onOpenSoftware={(app, action) => {

@@ -206,7 +206,8 @@ export function useAppChrome({
         residual.setMonitoring(false);
         setMonitorRecovery(null);
         residual.setMonitorDiff({ ...result.diff, items: result.items, scope_revision: result.scope_revision });
-        toast.success(
+        if (result.diff.trial_history_save_failed) toast.info(L.trialHistoryNotSaved, { channel: MON_CH });
+        else toast.success(
           L.toastMonitorDiff(result.diff.added_files.length, result.diff.added_reg_values.length),
           {
             channel: MON_CH,

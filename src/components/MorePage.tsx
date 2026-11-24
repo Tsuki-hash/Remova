@@ -510,7 +510,7 @@ export function MorePage({
       {openTool === "msi" && <MsiPanel onClose={returnToRoot} />}
       {openTool === "toolaudit" && <ToolchainPanel onClose={returnToRoot} />}
       {openTool === "diskradar" && (
-        <DiskRadarPanel onClose={returnToRoot} onError={onError} onInspect={onInspectFolder} />
+        <DiskRadarPanel onClose={returnToRoot} onInspect={onInspectFolder} />
       )}
       {showMonitorPanel && (
         <MonitorPanel

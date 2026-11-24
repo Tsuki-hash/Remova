@@ -186,9 +186,11 @@ describe("api IPC contract", () => {
     vi.mocked(invoke).mockResolvedValueOnce({ items: [], omitted: 0 }).mockResolvedValueOnce({ items: [], omitted: 0 });
     await api.regenerableLayouts();
     await api.regenerableLayouts(path);
-    expect(vi.mocked(invoke).mock.calls.slice(-2)).toEqual([
+    await api.regenerableLayouts(path, true);
+    expect(vi.mocked(invoke).mock.calls.slice(-3)).toEqual([
       ["scan_regenerable_layouts", { path: undefined }],
       ["scan_regenerable_layouts", { path }],
+      ["scan_regenerable_layouts", { path, probe: true }],
     ]);
   });
 

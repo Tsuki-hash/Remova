@@ -11,7 +11,7 @@ use tauri::async_runtime::{channel, Sender};
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ComponentStoreAnalysis {
     /// DISM's own verdict on whether StartComponentCleanup would pay off.
-    pub cleanup_recommended: bool,
+    pub cleanup_recommended: Option<bool>,
     /// Size shown in Explorer (hardlinks make it overcount).
     pub explorer_size_bytes: Option<u64>,
     /// Real on-disk size of the component store.
@@ -30,9 +30,14 @@ pub fn parse_dism_analyze(stdout: &str) -> ComponentStoreAnalysis {
         let value = value.trim();
         match label.as_str() {
             "component store cleanup recommended" => {
-                out.cleanup_recommended = value.eq_ignore_ascii_case("yes");
+                out.cleanup_recommended = match value.to_ascii_lowercase().as_str() {
+                    "yes" => Some(true),
+                    "no" => Some(false),
+                    _ => None,
+                };
             }
-            "size of component store in explorer" => {
+            "size of component store in explorer"
+            | "windows explorer reported size of component store" => {
                 out.explorer_size_bytes = parse_dism_size(value);
             }
             "actual size of component store" => {
@@ -242,7 +247,7 @@ mod tests {
     #[test]
     fn parses_real_dism_output() {
         let a = parse_dism_analyze(REAL_OUTPUT);
-        assert!(a.cleanup_recommended);
+        assert_eq!(a.cleanup_recommended, Some(true));
         assert_eq!(
             a.actual_size_bytes,
             Some((8.45 * 1024.0 * 1024.0 * 1024.0) as u64)
@@ -256,8 +261,19 @@ mod tests {
     #[test]
     fn parses_a_no_recommendation_run() {
         let a = parse_dism_analyze("Component Store Cleanup Recommended : No\r\n");
-        assert!(!a.cleanup_recommended);
+        assert_eq!(a.cleanup_recommended, Some(false));
         assert_eq!(a.actual_size_bytes, None);
+    }
+
+    #[test]
+    fn parses_official_explorer_label_and_keeps_unknown_recommendations() {
+        let a = parse_dism_analyze("Windows Explorer Reported Size of Component Store : 512.0 KB");
+        assert_eq!(a.explorer_size_bytes, Some(524_288));
+        assert_eq!(a.cleanup_recommended, None);
+        assert_eq!(
+            parse_dism_analyze("Component Store Cleanup Recommended: Pending").cleanup_recommended,
+            None
+        );
     }
 
     #[test]

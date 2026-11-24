@@ -302,7 +302,7 @@ mod tests {
                 |record, diff| {
                     assert_eq!(record.map(|metadata| &metadata.id), Some(&trial.id));
                     assert!(diff.trial_read_only);
-                    file.remove()
+                    file.remove().map(|_| true)
                 },
             )
         };

@@ -32,7 +32,7 @@ function capturePosition(opener: HTMLButtonElement, dialog: HTMLDivElement | nul
 }
 
 export function DirectoryWorkspace({
-  radar, inspection, apps, onInspect, onBack, onClose, onOpenSoftware,
+  radar, inspection, apps, onInspect, onBack, onClose, onOpenSoftware, onCacheBusy,
 }: {
   radar: boolean;
   inspection: FolderInspection | null;
@@ -40,6 +40,7 @@ export function DirectoryWorkspace({
   onInspect: (inspection: FolderInspection) => void;
   onBack: () => void;
   onClose: () => void;
+  onCacheBusy?: (busy: boolean) => void;
   onOpenSoftware: (app: InstalledApp, action: "analyze" | "uninstall") => void;
 }) {
   const L = t();
@@ -94,7 +95,6 @@ export function DirectoryWorkspace({
         {radar && (
           <div className="directory-radar-view" hidden={Boolean(inspection)}>
             <DiskRadarPanel
-              onError={setError}
               onInspect={(row, opener, origin) => {
                 radarPosition.current = capturePosition(opener, dialog.current);
                 onInspect({ path: row?.path ?? "", measurement: row, origin });
@@ -113,7 +113,7 @@ export function DirectoryWorkspace({
           </div>
         )}
         {cachePath !== null && <DiskOverviewPanel key={cachePath} focusCachePath={cachePath}
-          onClose={back} onCacheBusy={setCacheBusy} />}
+          onClose={back} onCacheBusy={busy => { onCacheBusy?.(busy); setCacheBusy(busy); }} />}
         {app && (
           <AppDetailPanel
             app={app}

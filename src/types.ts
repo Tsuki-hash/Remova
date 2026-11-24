@@ -157,7 +157,7 @@ export type JunctionScanResult = {
 
 /** Disk-space overview: DISM component-store analysis (read-only). */
 export type ComponentStoreAnalysis = {
-  cleanup_recommended: boolean;
+  cleanup_recommended: boolean | null;
   explorer_size_bytes: number | null;
   actual_size_bytes: number | null;
 };
@@ -187,12 +187,12 @@ export type RegenerableItem = {
   deletable: boolean;
   block_reason: string | null;
 };
-export type RegenerableScanResult = { items: RegenerableItem[]; omitted: number };
+export type RegenerableScanResult = { items: RegenerableItem[]; omitted: number; resolved_path?: string };
 export type RegenerableSkipped = { path: string; message: string };
 export type RegenerableCleanupReport = {
   cleaned: string[];
   skipped: RegenerableSkipped[];
-  reclaimed_kb: number;
+  reclaimed_kb: number | null;
 };
 
 /** global CLI package inventory (read-only; npm/pnpm/yarn). */

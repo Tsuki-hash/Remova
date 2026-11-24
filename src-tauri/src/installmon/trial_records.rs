@@ -164,6 +164,26 @@ mod store {
 
     #[cfg(test)]
     #[test]
+    fn damaged_history_is_not_overwritten_by_a_new_trial() {
+        let lab = crate::test_support::TempDir::new("damaged_trial_history");
+        let store = Store {
+            path: lab.join("record.v1"),
+            context: "trial history fixture".into(),
+        };
+        let trial = Trial::new(Some("Fixture".into())).unwrap().unwrap();
+        std::fs::write(&store.path, b"previous damaged history").unwrap();
+        assert!(save_record(&store, &trial, &MonitorDiff::default()).is_err());
+        assert_eq!(
+            std::fs::read(&store.path).unwrap(),
+            b"previous damaged history"
+        );
+        std::fs::rename(&store.path, lab.join("preserved.v1")).unwrap();
+        save_record(&store, &trial, &MonitorDiff::default()).unwrap();
+        assert_eq!(store.read().unwrap().len(), 1);
+    }
+
+    #[cfg(test)]
+    #[test]
     fn completed_history_contains_the_read_only_diff_and_survives_reopen() {
         let lab = crate::test_support::TempDir::new("trial_history");
         let store = Store {

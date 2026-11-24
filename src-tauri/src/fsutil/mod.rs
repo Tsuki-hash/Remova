@@ -523,7 +523,7 @@ fn relative_names_with_limit(
     pin: &DirPin,
     limit: usize,
 ) -> std::io::Result<Vec<std::ffi::OsString>> {
-    relative_entries_with_limit(pin, limit, || false, |name, _| name).map(|(names, _)| names)
+    relative_entries_with_limit(pin, limit, false, || false, |name, _| name).map(|(names, _)| names)
 }
 
 pub(crate) fn read_local_directory_entries(
@@ -537,6 +537,7 @@ pub(crate) fn read_local_directory_entries(
     relative_entries_with_limit(
         parent,
         20_000,
+        false,
         || std::time::Instant::now() >= deadline,
         |name, attributes| (name, attributes),
     )
@@ -547,6 +548,7 @@ type DirectoryEntries = (Vec<(std::ffi::OsString, u32)>, bool);
 fn relative_entries_with_limit<T>(
     pin: &DirPin,
     limit: usize,
+    keep_prefix: bool,
     stop: impl Fn() -> bool,
     entry_value: impl Fn(std::ffi::OsString, u32) -> T,
 ) -> std::io::Result<(Vec<T>, bool)> {
@@ -602,10 +604,13 @@ fn relative_entries_with_limit<T>(
                 let units = unsafe { std::slice::from_raw_parts(entry.FileName.as_ptr(), len) };
                 let name = std::ffi::OsString::from_wide(units);
                 if name != "." && name != ".." {
+                    if stop() || (keep_prefix && entries.len() == limit) {
+                        return Ok((entries, true));
+                    }
+                    if entries.len() == limit {
+                        return Err(std::io::Error::other("directory budget exceeded"));
+                    }
                     entries.push(entry_value(name, entry.FileAttributes));
-                }
-                if entries.len() > limit {
-                    return Err(std::io::Error::other("directory budget exceeded"));
                 }
                 if entry.NextEntryOffset == 0 {
                     break;
@@ -623,7 +628,7 @@ fn relative_entries_with_limit<T>(
     }
     #[cfg(not(windows))]
     {
-        let _ = (pin, limit, stop, entry_value);
+        let _ = (pin, limit, keep_prefix, stop, entry_value);
         Err(std::io::Error::other("Windows handle required"))
     }
 }
@@ -712,33 +717,101 @@ pub fn local_scan_size(root: &Path) -> (i64, bool) {
 }
 
 pub(crate) fn pinned_scan_size(root: &DirPin) -> (i64, bool) {
+    pinned_scan_size_with_budget(root, 4999, crate::scan_task::cancelled)
+}
+
+fn pinned_scan_size_with_budget(
+    root: &DirPin,
+    mut remaining: usize,
+    stop: impl Fn() -> bool,
+) -> (i64, bool) {
     fn walk_pin(
         pin: &DirPin,
         depth: usize,
         left: &mut usize,
         bytes: &mut u64,
-    ) -> std::io::Result<()> {
-        let md = pin_metadata(pin)?;
+        stop: &impl Fn() -> bool,
+    ) -> bool {
+        if stop() {
+            return true;
+        }
+        let Ok(md) = pin_metadata(pin) else {
+            return true;
+        };
         if is_reparse_metadata(&md) {
-            return Err(std::io::Error::other("size refuses reparse"));
+            return true;
         }
         if md.is_file() {
             *bytes = bytes.saturating_add(md.len());
-        } else if md.is_dir() {
-            for name in relative_names(pin)? {
-                if *left == 0 || depth >= 8 || crate::scan_task::cancelled() {
-                    return Err(std::io::Error::other("size capped"));
-                }
-                *left -= 1;
-                let child = open_relative(pin, &name, 0x81, false)?;
-                walk_pin(&child, depth + 1, left, bytes)?;
-            }
+            return false;
         }
-        Ok(())
+        if !md.is_dir() {
+            return true;
+        }
+        let limit = if depth >= 8 { 0 } else { *left };
+        let Ok((names, mut capped)) =
+            relative_entries_with_limit(pin, limit, true, stop, |name, _| name)
+        else {
+            return true;
+        };
+        // Reserve enumerated siblings before descending: the budget is shared
+        // even while the parent list remains alive on the stack.
+        *left -= names.len();
+        for name in names {
+            if stop() {
+                return true;
+            }
+            capped |= open_relative(pin, &name, 0x81, false)
+                .map_or(true, |child| walk_pin(&child, depth + 1, left, bytes, stop));
+        }
+        capped
     }
     let mut bytes = 0;
-    let capped = crate::scan_task::cancelled() || walk_pin(root, 0, &mut 4999, &mut bytes).is_err();
-    (bytes.div_ceil(1024).min(i64::MAX as u64) as i64, capped)
+    let capped = walk_pin(root, 0, &mut remaining, &mut bytes, &stop);
+    let kb = if capped {
+        bytes / 1024
+    } else {
+        bytes.div_ceil(1024)
+    };
+    (kb.min(i64::MAX as u64) as i64, capped)
+}
+
+#[cfg(all(test, windows))]
+#[test]
+fn pinned_size_preserves_prefix_and_shares_budget() {
+    let tmp = crate::test_support::TempDir::new("size-budget");
+    let dir = tmp.subdir("sub");
+    for path in [tmp.join("one"), dir.join("two"), dir.join("three")] {
+        std::fs::write(path, [0; 1024]).unwrap();
+    }
+    let pins = pin_local_scan_path(tmp.path()).unwrap();
+    let root = pins.last().unwrap();
+    assert_eq!(pinned_scan_size_with_budget(root, 3, || false), (2, true));
+    assert_eq!(pinned_scan_size_with_budget(root, 4, || false), (3, false));
+    assert_eq!(pinned_scan_size_with_budget(root, 5, || false), (3, false));
+    assert_eq!(pinned_scan_size_with_budget(root, 5, || true), (0, true));
+}
+
+#[cfg(all(test, windows))]
+#[test]
+#[ignore = "writes twenty thousand small files to a private temp directory"]
+fn pinned_size_preserves_prefix_in_a_wide_directory() {
+    let tmp = crate::test_support::TempDir::new("wide-size-budget");
+    for count in 1..=20_001 {
+        std::fs::write(tmp.join(format!("file-{count:05}")), [0; 1024]).unwrap();
+        if matches!(count, 4_998 | 4_999 | 5_000 | 20_001) {
+            let pins = pin_local_scan_path(tmp.path()).unwrap();
+            let root = pins.last().unwrap();
+            let (names, capped) =
+                relative_entries_with_limit(root, 4_999, true, || false, |name, _| name).unwrap();
+            assert_eq!(names.len(), count.min(4_999));
+            assert_eq!(capped, count > 4_999);
+            assert_eq!(
+                pinned_scan_size(root),
+                (count.min(4_999) as i64, count > 4_999)
+            );
+        }
+    }
 }
 
 /// Windows reparse point (junction / mount / symlink). Never follow when copying.

@@ -140,6 +140,7 @@ it.each([
   { scenario: "known file lock", count: 1, reasons: ["sharing violation (os error 32)"], busy: true },
   { scenario: "mixed reasons", count: 2, reasons: ["sharing violation (os error 32)", "access is denied (os error 5)"], busy: false },
   { scenario: "missing details", count: 2, reasons: ["sharing violation (os error 32)"], busy: false },
+  { scenario: "ambiguous absence", count: 2, reasons: ["native operation failed or not found", "native operation failed or not found"], busy: false },
   { scenario: "unknown reason", count: 1, reasons: ["native diagnostic"], busy: false },
 ])("shows only supported failure guidance for $scenario", ({ count, reasons, busy }) => {
   const L = t();

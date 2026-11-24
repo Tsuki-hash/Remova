@@ -5,6 +5,7 @@
 // softwarePageIdentity (SoftwarePage), moreReleases + moreExportReport (MorePage),
 // orphanSummary (OrphanPage), manageListPage (ManageListPage).
 import { cleanupItemKey } from "../lib/cleanupPlan";
+import { DISK_RADAR_SNAPSHOT_KEY, snapshotDiskRadar } from "../lib/diskRadarSnapshot";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { requestBackupSession, useBackupSessionRequest, clearBackupSessionRequest } from "../lib/backupSessionNavigation";
@@ -27,6 +28,8 @@ const native = vi.hoisted(() => ({
   installMonitorStatus: vi.fn(), discardInstallMonitorRecovery: vi.fn(),
   verifyLeftovers: vi.fn(), aiSummarizeReport: vi.fn(),
   checkLatestRelease: vi.fn(), requestConfirmEx: vi.fn(), requestConfirm: vi.fn(),
+  listLocalDrives: vi.fn(), listTopDirSizes: vi.fn(), diskRadarVolumeId: vi.fn(),
+  regenerableLayouts: vi.fn(), deleteRegenerableLayouts: vi.fn(),
   showRealSoftwarePage: false,
   showRealOrphanPage: false,
   returnToToolRoot: vi.fn(),
@@ -442,6 +445,38 @@ describe("App orchestration", () => {
     await waitFor(() => expect(native.analyze).toHaveBeenCalledWith(adjacent, expect.any(Number)));
   });
 
+  it("does not replace the cache preview with a native drop until cleanup has settled", async () => {
+    const path = "C:\\Windows\\Temp";
+    const row = { path, name: "Temp", parent: "C:\\Windows", size_kb: 100 };
+    const cache = { path, reason: "win_temp", size_kb: 100, deletable: true, size_capped: false, block_reason: null };
+    localStorage.setItem(DISK_RADAR_SNAPSHOT_KEY, JSON.stringify(snapshotDiskRadar("test-volume", "system:v1", [row])));
+    native.listLocalDrives.mockResolvedValue([{ letter: "C", is_system: true, total_gb: 10, free_gb: 1 }]);
+    native.diskRadarVolumeId.mockResolvedValue("test-volume");
+    native.listTopDirSizes.mockResolvedValue([{ ...row, size_kb: 200 }]);
+    native.regenerableLayouts.mockResolvedValue({ items: [cache], omitted: 0 });
+    native.requestConfirmEx.mockResolvedValueOnce({ ok: true, checked: false });
+    let finish!: (report: { cleaned: string[]; skipped: []; reclaimed_kb: null }) => void;
+    native.deleteRegenerableLayouts.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    await mount();
+    const L = i18n.t();
+    fireEvent.click(screen.getByRole("button", { name: L.diskRadarShortcut }));
+    fireEvent.click(await screen.findByRole("button", { name: `${L.diskRadarInspectGrowth}: ${path}` }));
+    fireEvent.click(await screen.findByRole("button", { name: L.diskRadarCacheOpen }));
+    const preview = within(screen.getByRole("dialog", { name: L.regenTitle }));
+    fireEvent.click(await preview.findByRole("checkbox", { name: path }));
+    fireEvent.click(preview.getByRole("button", { name: L.regenClean }));
+    await waitFor(() => expect(native.deleteRegenerableLayouts).toHaveBeenCalledExactlyOnceWith([path]));
+    await waitFor(() => expect(native.drag).toBeTruthy());
+    const nextPath = "C:\\Dropped";
+    const drop = () => native.drag!({ payload: { type: "drop", paths: [nextPath] } });
+    act(drop);
+    expect(screen.getByRole("dialog", { name: L.regenTitle })).toBeTruthy();
+    await act(async () => { finish({ cleaned: [path], skipped: [], reclaimed_kb: null }); });
+    act(drop);
+    const inspector = await screen.findByRole("dialog", { name: L.folderInspectTitle });
+    expect(within(inspector).getByRole<HTMLInputElement>("textbox", { name: L.folderInspectPath }).value).toBe(nextPath);
+  });
+
   it("uses the active sidebar entry to return to its own root", async () => {
     await mount();
     await act(async () => { software().selectApp(demo); });
@@ -522,8 +557,12 @@ describe("App orchestration", () => {
     act(() => pages.orphan!.onLastReport?.(report));
     await nav("more");
     expect(more().lastReport).toEqual(report);
-    act(() => more().onExportReport());
-    expect(exportHtmlReport).toHaveBeenCalledWith(report, i18n.t());
+    await act(async () => { more().onExportReport(); });
+    expect(native.requestConfirm).toHaveBeenLastCalledWith(expect.objectContaining({ message: i18n.t().exportReportPrivacy }));
+    expect(exportHtmlReport).not.toHaveBeenCalled();
+    native.requestConfirm.mockResolvedValueOnce(true);
+    await act(async () => { more().onExportReport(); });
+    expect(exportHtmlReport).toHaveBeenCalledExactlyOnceWith(report, i18n.t());
     act(() => more().onCloseModeChange("quit"));
     expect(more().closeMode).toBe("quit");
     act(() => more().onLastReport?.({ ...report, deleted: 2 }));
@@ -538,7 +577,7 @@ describe("App orchestration", () => {
   it("does not export without a report and wires manual update checks", async () => {
     await mount();
     await nav("more");
-    act(() => more().onExportReport());
+    await act(async () => { more().onExportReport(); });
     expect(exportHtmlReport).not.toHaveBeenCalled();
     // A failed check surfaces the localized reason only — it must not
     // auto-open the browser (the download CTA is the manual path).

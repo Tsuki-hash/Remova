@@ -37,10 +37,12 @@ export function DiskRadarPanel({
   onInspect,
 }: {
   onClose?: () => void;
-  onError: (msg: string) => void;
+  onError?: (msg: string) => void;
   onInspect?: RadarInspectHandler;
 }) {
   const L = t();
+  const [openError, setOpenError] = useState<string | null>(null);
+  const [scanError, setScanError] = useState<string | null>(null);
   const [rows, setRows] = useState<DirSizeRow[] | null>(null);
   const [partial, setPartial] = useState<PartialInfo | null>(null);
   const [drives, setDrives] = useState<DriveInfo[]>([]);
@@ -53,12 +55,20 @@ export function DiskRadarPanel({
   const busyRef = useRef(false);
   const { runReadOnly, cancel, progress } = useAssociationScan();
 
-  const load = async (parent?: string, letter?: string, nextCrumbs: DirSizeRow[] = [], system = false) => {
+  const load = async (parent?: string, letter?: string, nextCrumbs: DirSizeRow[] = [], system = false, initialize = false) => {
     if (busyRef.current) return;
     busyRef.current = true;
     const seq = nextRequest();
     setBusy(true);
     try {
+      if (initialize) {
+        const list = await api.listLocalDrives();
+        if (!isCurrentRequest(seq)) return;
+        setDrives(list);
+        const root = list.find(d => d.is_system) ?? list[0];
+        letter = root?.letter;
+        system = Boolean(root?.is_system);
+      }
       const mountedVolume = async () => {
         const driveLetter = (parent ?? letter ?? "").match(/^[a-z](?=:|$)/i)?.[0];
         if (!driveLetter) return null;
@@ -88,18 +98,23 @@ export function DiskRadarPanel({
         r => r.result.rows.length,
       );
       if (isCurrentRequest(seq)) {
+        setScanError(null);
         setRows(result.rows);
         setPartial(result.partial);
         setCrumbs(nextCrumbs);
         setScope(volume ? { volume, range } : null);
         setMeasuredAt(Date.now());
-        if (!parent) setDrive(letter || drives.find(d => d.is_system)?.letter || drives[0]?.letter || "");
+        if (!parent) setDrive(letter ?? "");
       }
     } catch (e) {
       if (isCurrentRequest(seq)) {
         // A cancel must not throw away what the user was already looking at;
         // the progress bar says the scan was stopped.
-        if (!scanCancelled(e)) onError(formatError(e));
+        if (!scanCancelled(e)) {
+          const message = formatError(e);
+          setScanError(message);
+          onError?.(message);
+        }
       }
     } finally {
       if (isCurrentRequest(seq)) {
@@ -110,20 +125,8 @@ export function DiskRadarPanel({
   };
 
   useEffect(() => {
-    let alive = true;
-    void (async () => {
-      try {
-        const list = await api.listLocalDrives();
-        if (!alive) return;
-        setDrives(list);
-        const sys = list.find((d) => d.is_system) ?? list[0];
-        const letter = sys?.letter ?? "";
-        await load(undefined, letter, [], Boolean(sys?.is_system));
-      } catch (e) {
-        if (alive) onError(formatError(e));
-      }
-    })();
-    return () => { alive = false; invalidateRequest(); busyRef.current = false; };
+    void load(undefined, undefined, [], false, true);
+    return () => { invalidateRequest(); busyRef.current = false; };
  // Mount-only: the first listing starts once; a later prop change must not restart it.
  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -190,7 +193,8 @@ export function DiskRadarPanel({
               // Refresh re-scans what the user is looking at: the current
               // parent in a drill-down, the drive root on the top view.
               const parent = crumbs[crumbs.length - 1];
-              void load(parent?.path, drive, crumbs, Boolean(current?.is_system));
+              const target = current ?? drives.find(d => d.is_system) ?? drives[0];
+              void load(parent?.path, target?.letter, crumbs, Boolean(target?.is_system), drives.length === 0);
             }}
             title={busy ? L.radarScanning : undefined}
           >
@@ -199,6 +203,8 @@ export function DiskRadarPanel({
           {onClose && <BackButton onClick={onClose} />}
         </div>
       </div>
+      {scanError && <p role="alert" className="folder-reference-incomplete">{scanError}</p>}
+      {openError && <p role="alert" className="folder-reference-incomplete">{openError}</p>}
       <ScanProgressBar
         progress={progress}
         onCancel={cancel}
@@ -308,7 +314,14 @@ export function DiskRadarPanel({
             )}
             <button
               style={{ ...css.btnGhost, height: 26, padding: "0 8px", flexShrink: 0 }}
-              onClick={() => void api.openPath(r.path).catch((e) => onError(formatError(e)))}
+              onClick={() => {
+                setOpenError(null);
+                void api.openPath(r.path).catch(e => {
+                  const message = formatError(e);
+                  setOpenError(message);
+                  onError?.(message);
+                });
+              }}
             >
               {L.openLocation}
             </button>
