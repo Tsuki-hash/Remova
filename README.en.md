@@ -91,10 +91,10 @@ Get the latest build from **[Releases](https://github.com/Tsuki-hash/Remova/rele
 Current packages are unsigned and updates are downloaded manually. Download the package and `SHA256SUMS.txt` from the same release page. Run the following in PowerShell and compare the hash with the entry for that file. When they match, run the installer or extract the portable ZIP.
 
 ```powershell
-Get-FileHash -Algorithm SHA256 -LiteralPath "$env:USERPROFILE\Downloads\Remova_1.5.0_x64-setup.exe"
+Get-FileHash -Algorithm SHA256 -LiteralPath (Read-Host 'Enter the full path to the downloaded file (without quotes)')
 ```
 
-Replace the example path with the file you downloaded. The release also includes `SBOM.cdx.json` for the Windows x64 Rust dependency graph and npm production dependencies.
+Enter the path to the EXE, MSI, or ZIP you downloaded. The release also includes `SBOM.cdx.json` for the Windows x64 Rust dependency graph and npm production dependencies.
 >
 > Authenticode identifies the Windows publisher and is configured separately through SignPath. In-app updates require explicit enablement and all three updater signing settings before the workflow produces `latest.json` and `.sig`. MSI and portable builds use manual downloads. See the [release signing guide](.github/RELEASE_SIGNING.md).
 

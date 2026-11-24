@@ -94,10 +94,10 @@
 当前发行包未签名，更新通过手动下载。请从同一发布页下载安装包和 `SHA256SUMS.txt`，在 PowerShell 中运行以下命令，把结果与校验文件中同名文件的 SHA-256 比对。匹配后再运行安装程序或解压便携版。
 
 ```powershell
-Get-FileHash -Algorithm SHA256 -LiteralPath "$env:USERPROFILE\Downloads\Remova_1.5.0_x64-setup.exe"
+Get-FileHash -Algorithm SHA256 -LiteralPath (Read-Host '输入下载文件的完整路径（不要加引号）')
 ```
 
-将示例路径换成下载的文件。发布页还提供 `SBOM.cdx.json`，列出 Windows x64 的 Rust 运行依赖和 npm 生产依赖。
+可输入实际下载的 EXE、MSI 或 ZIP 路径。发布页还提供 `SBOM.cdx.json`，列出 Windows x64 的 Rust 运行依赖和 npm 生产依赖。
 >
 > Authenticode 标识 Windows 发布者，由 SignPath 单独配置。应用内更新须显式启用并提供三项更新器签名配置，才生成 `latest.json` 与 `.sig`。MSI 和便携版使用手动下载。发布配置见 [签名与发布说明](.github/RELEASE_SIGNING.md)。
 
