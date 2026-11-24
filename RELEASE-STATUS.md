@@ -1,8 +1,14 @@
 # Remova Release Status
 
+## 1.5.2 (published 2026-11-23)
+
+- **Status**: [`v1.5.2`](https://github.com/Tsuki-hash/Remova/releases/tag/v1.5.2) is the latest public release. The manual-download attachments are the unsigned NSIS setup, MSI, portable ZIP, `SHA256SUMS.txt`, and `SBOM.cdx.json`. GitHub reports a SHA-256 digest for each attachment.
+- **Validation**: the tag resolves to `feef8e3a7ae10cacbafa1983eaaa617c5cc5a126`. The exact commit's [CI test and package jobs](https://github.com/Tsuki-hash/Remova/actions/runs/45098650324) and the [publication approval run](https://github.com/Tsuki-hash/Remova/actions/runs/45106684138) passed. This is historical evidence for 1.5.2, not for the next candidate.
+- **Downloads**: verify an installer or portable package against `SHA256SUMS.txt` from the same release before using it. The [recovery guide](RECOVERY.md) covers upgrades, downgrades, and retaining local data.
+
 ## 1.5.1 (published 2026-11-17)
 
-- **Status**: published as [`v1.5.1`](https://github.com/Tsuki-hash/Remova/releases/tag/v1.5.1) with unsigned NSIS, MSI and portable packages, `SHA256SUMS.txt`, and `SBOM.cdx.json`. GitHub's latest release points to 1.5.1.
+- **Status**: published as [`v1.5.1`](https://github.com/Tsuki-hash/Remova/releases/tag/v1.5.1) with unsigned NSIS, MSI and portable packages, `SHA256SUMS.txt`, and `SBOM.cdx.json`.
 - **Validation**: the tag resolves to `fc9c44d01732a5d21c0f774a208ff61cbee96026`. The exact candidate's [CI](https://github.com/Tsuki-hash/Remova/actions/runs/44058796950) and [release build](https://github.com/Tsuki-hash/Remova/actions/runs/44062070949) passed. The same executable from the draft portable ZIP reached WebView2 navigation readiness on Windows 11 x64 under both regular and administrator tokens. All five published asset digests match the reviewed attachments; the locked-dependency SBOM and bundled license notices were verified.
 - **Publication**: the [approval workflow](https://github.com/Tsuki-hash/Remova/actions/runs/44070947452) passed and verified the title, notes, attachments and latest release at publication. Its tooling passed a separate [CI run](https://github.com/Tsuki-hash/Remova/actions/runs/44065380049).
 - **CI gate** (carried from 1.4.0): the release workflow requires a successful `CI` run (`test` and `package` both green) for the exact tagged commit, a matching `CHANGELOG.md` section for the tag, and will not replace an already-published release.

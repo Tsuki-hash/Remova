@@ -137,5 +137,5 @@
 如需移除个人账户的数据，按用途处理：
 
 - **AI 凭据和设置。** 仍能打开 Remova 时，在 AI 设置中清除密钥并保存。卸载后可以移除实际操作账户的 `%LOCALAPPDATA%\Remova\ai-config.json`。这个文件包含经 DPAPI 保护的密钥。
-- **安装追踪。** 在开始追踪的账户及权限模式下查看或放弃快照。确认无需继续比较后，可在关闭 Remova 时移除同一账户下的 `%LOCALAPPDATA%\Remova\install-monitor.v1`。需要清除已完成的试用记录时，在该目录移除普通模式的 `install-trials.v1` 和管理员模式的 `install-trials-admin.v1`。使用另一管理员账户启动过 Remova 时，检查该账户的对应目录。
+- **安装追踪。** 在开始追踪的账户及权限模式下查看或放弃快照。三个独立文件同在实际操作账户的 `%LOCALAPPDATA%\Remova` 目录：`install-monitor.v1` 是待比较快照，`install-trials.v1` 是普通权限的试用历史，`install-trials-admin.v1` 是管理员权限的试用历史。关闭 Remova 后，仅将要清除或损坏的那一个文件移到保留目录；另两个文件无需移动。若用另一管理员账户提权，须检查那个账户的 LocalAppData。旧历史保留在移出的文件中；下一次成功保存会在原目录建立新历史。
 - **清理历史和规则。** `%PROGRAMDATA%\Remova` 下的 `history.jsonl` 和 `ignore.json` 可按需保留。安全库 `%PROGRAMDATA%\Remova\Backup\`、会话验证数据及 `%PROGRAMDATA%\RemovaSealKeys` 应随所需的还原材料保留。先确认备份和迁移都已处理，再决定清理哪些共享数据。
