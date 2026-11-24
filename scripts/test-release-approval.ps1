@@ -73,9 +73,14 @@ function Test-LaunchObservation([string]$FixtureRoot) {
     function Wait-RemovaUiReady($Process) { $Process.Id -eq 4321 -and $state.ready }
     function Close-RemovaTestProcess($Process) { if ($Process.Id -eq 4321) { $state.closed++ } }
 
-    $observed = Get-AcceptanceLaunchObservation $exe $version $digest
+    function Get-AcceptanceProcessElevation($Process) {
+        if ($Process.Id -ne 4321) { throw 'Unexpected token query' }
+        if ($state.tokenFailure) { throw 'Fixture token unavailable' }
+        $true
+    }
+    $observed = Get-AcceptanceLaunchObservation $exe $version $digest -ObserveToken
     if ($observed.path -ine $exe -or $observed.version -cne $version -or $observed.sha256 -cne $digest -or
-        $observed.pid -ne 4321 -or !$observed.uia_ready -or $state.starts -ne 1 -or $state.closed -ne 1) {
+        $observed.pid -ne 4321 -or !$observed.elevated -or !$observed.uia_ready -or $state.starts -ne 1 -or $state.closed -ne 1) {
         throw 'The launch observation did not record the verified executable and readiness.'
     }
     Must-Refuse { Get-AcceptanceLaunchObservation $exe $version ('f' * 64) } 'does not match the reviewed package'
@@ -87,6 +92,10 @@ function Test-LaunchObservation([string]$FixtureRoot) {
     Must-Refuse { Get-AcceptanceLaunchObservation $exe $version $digest } 'running process did not match'
     $state.ready = $false
     Must-Refuse { Get-AcceptanceLaunchObservation $exe $version $digest } 'did not show the enabled Software navigation button'
+    $state.ready = $true
+    $state.actualPath = $exe
+    $state.tokenFailure = $true
+    Must-Refuse { Get-AcceptanceLaunchObservation $exe $version $digest -ObserveToken } 'Fixture token unavailable'
     if ($state.closed -ne $state.starts) { throw 'An unsuccessful launch was not closed.' }
 }
 
@@ -448,7 +457,7 @@ $reference | ConvertTo-Json -Depth 3
 
     $evidence = foreach ($mode in @('client', 'elevated')) {
         $record = @{
-            schema_version = 1
+            schema_version = 2
             kind = 'remova-release-launch'
             candidate_commit = $commit
             candidate_version = '1.4.1'
@@ -460,7 +469,7 @@ $reference | ConvertTo-Json -Depth 3
                 elevated = $mode -eq 'elevated'
             }
             executable = @{ path = 'C:\fixture\remova.exe'; version = '1.4.1';
-                sha256 = $portableExeHash; pid = 4321; uia_ready = $true }
+                sha256 = $portableExeHash; pid = 4321; uia_ready = $true; elevated = $mode -eq 'elevated' }
         }
         $file = Join-Path $root "$mode-launch.json"
         $record | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $file
@@ -493,13 +502,15 @@ $reference | ConvertTo-Json -Depth 3
     }
     $originalSummary = Get-Content -Raw -LiteralPath $evidence[0]
     foreach ($scenario in @('old-build', 'other-channel', 'missing-ui', 'old-version', 'relative-path',
-        'missing-executable', 'other-machine', 'other-commit', 'not-a-token')) {
+        'missing-executable', 'other-machine', 'other-commit', 'not-a-token', 'wrong-process-token', 'missing-process-token')) {
         $observed = $originalSummary | ConvertFrom-Json -AsHashtable
         $reason = 'Invalid portable executable identity or UI readiness'
         switch ($scenario) {
             'old-build' { $observed.executable.sha256 = 'f' * 64 }
             'other-channel' { $observed.executable.sha256 = $exeHashes.msi }
             'missing-ui' { $observed.executable.uia_ready = $false }
+            'wrong-process-token' { $observed.executable.elevated = $true }
+            'missing-process-token' { $observed.executable.Remove('elevated') }
             'old-version' { $observed.executable.version = '1.4.0' }
             'relative-path' { $observed.executable.path = 'remova.exe' }
             'missing-executable' { $observed.Remove('executable') }

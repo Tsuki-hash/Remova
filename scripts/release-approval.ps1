@@ -127,7 +127,7 @@ if ($PSCmdlet.ParameterSetName -eq 'Prepare') {
         $record = [Text.Encoding]::UTF8.GetString($recordBytes).TrimStart([char]0xFEFF) | ConvertFrom-Json -AsHashtable
         $environment = $record.environment
         $launch = $record.executable
-        if ($record.schema_version -ne 1 -or $record.kind -cne 'remova-release-launch' -or
+        if ($record.schema_version -ne 2 -or $record.kind -cne 'remova-release-launch' -or
             $record.candidate_commit -cne $Commit -or $record.candidate_version -cne $version -or
             $environment.elevated -isnot [bool] -or $environment.architecture -cne 'x64' -or
             $environment.machine_sha256 -cnotmatch '^[a-f0-9]{64}$' -or
@@ -141,7 +141,8 @@ if ($PSCmdlet.ParameterSetName -eq 'Prepare') {
             throw 'Both local launches must use the same Windows machine.'
         }
         $machine = $environment.machine_sha256
-        if ($launch -isnot [Collections.IDictionary] -or $launch.Count -ne 5 -or
+        if ($launch -isnot [Collections.IDictionary] -or $launch.Count -ne 6 -or
+            $launch.elevated -isnot [bool] -or $launch.elevated -ne $environment.elevated -or
             $launch.path -isnot [string] -or !(Test-AcceptanceExecutablePath $launch.path) -or
             $launch.version -isnot [string] -or !(Test-AcceptanceExecutableVersion $launch.version $version) -or
             $launch.sha256 -cne $executables.portable -or

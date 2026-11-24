@@ -147,7 +147,33 @@ function Test-AcceptanceExecutablePath([string]$Path) {
     $Path -match '^[a-z]:[\\/](?:.*[\\/])?remova\.exe$' -and $Path -notmatch '[\\/]\.\.?[\\/]'
 }
 
-function Get-AcceptanceLaunchObservation([string]$Path, [string]$Version, [string]$ExpectedSha256) {
+function Get-AcceptanceProcessElevation([Diagnostics.Process]$Process) {
+    if (-not ('RemovaAcceptanceProcessToken' -as [type])) {
+        Add-Type -TypeDefinition @"
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+public static class RemovaAcceptanceProcessToken {
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool OpenProcessToken(IntPtr process, uint access, out SafeAccessTokenHandle token);
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool GetTokenInformation(SafeAccessTokenHandle token, int infoClass,
+        out uint elevation, uint size, out uint written);
+    public static bool IsElevated(IntPtr process) {
+        if (!OpenProcessToken(process, 0x0008, out var token)) throw new Win32Exception();
+        using (token) {
+            if (!GetTokenInformation(token, 20, out uint elevation, sizeof(uint), out _)) throw new Win32Exception();
+            return elevation != 0;
+        }
+    }
+}
+"@
+    }
+    [RemovaAcceptanceProcessToken]::IsElevated($Process.Handle)
+}
+
+function Get-AcceptanceLaunchObservation([string]$Path, [string]$Version, [string]$ExpectedSha256, [switch]$ObserveToken) {
     if (-not (Test-AcceptanceExecutablePath $Path)) {
         throw 'Enter the full path of the installed or extracted remova.exe.'
     }
@@ -167,13 +193,15 @@ function Get-AcceptanceLaunchObservation([string]$Path, [string]$Version, [strin
             if (-not (Wait-RemovaUiReady $process)) { throw 'The process did not show the enabled Software navigation button.' }
             $actualPath = $process.MainModule.FileName
             if ($process.HasExited -or $actualPath -ine $path) { throw 'The running process did not match the selected executable.' }
-            [ordered]@{
+            $observation = [ordered]@{
                 path = $actualPath
                 version = $productVersion
                 sha256 = $hash
                 pid = $process.Id
                 uia_ready = $true
             }
+            if ($ObserveToken) { $observation.elevated = Get-AcceptanceProcessElevation $process }
+            $observation
         } finally { Close-RemovaTestProcess $process }
     } finally { $pin.Dispose() }
 }

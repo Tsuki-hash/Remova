@@ -18,9 +18,12 @@ if ((Test-AcceptanceElevated) -ne ($Mode -eq 'elevated')) {
 }
 if (Test-Path -LiteralPath $Out) { throw 'Choose a new path for the launch record.' }
 $environment = Get-PerformanceEnvironment
-$observation = Get-AcceptanceLaunchObservation $ExePath $CandidateVersion ($ExpectedExeSha256.ToLowerInvariant())
+$observation = Get-AcceptanceLaunchObservation $ExePath $CandidateVersion ($ExpectedExeSha256.ToLowerInvariant()) -ObserveToken
+if ($observation.elevated -isnot [bool] -or $observation.elevated -ne ($Mode -eq 'elevated')) {
+    throw "The observed Remova process token does not match the $Mode launch."
+}
 [ordered]@{
-    schema_version = 1
+    schema_version = 2
     kind = 'remova-release-launch'
     candidate_commit = $CandidateCommit.ToLowerInvariant()
     candidate_version = $CandidateVersion

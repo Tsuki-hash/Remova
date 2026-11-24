@@ -2,7 +2,7 @@
 
 ## 发版本机启动记录
 
-从同一批待发布附件生成 `package-exe-reference.json`，解压便携包。用同一台 Windows 电脑，先在普通 PowerShell 运行以下命令，再在管理员 PowerShell 将 `-Mode` 改为 `elevated`、输出改为 `elevated-launch.json`。每次运行前关闭已有 Remova。脚本会检查实际进程身份和 WebView2 导航就绪，并关闭该实例。
+从同一批待发布附件生成 `package-exe-reference.json`，解压便携包。用同一台 Windows 电脑，先在普通 PowerShell 运行以下命令，再在管理员 PowerShell 将 `-Mode` 改为 `elevated`、输出改为 `elevated-launch.json`。每次运行前关闭已有 Remova。脚本会读取实际 Remova 进程的令牌，检查令牌与所选模式匹配，并核对进程身份和 WebView2 导航就绪，最后关闭该实例。
 
 ```powershell
 $reference = Get-Content -Raw 'D:/acceptance/package-exe-reference.json' | ConvertFrom-Json
