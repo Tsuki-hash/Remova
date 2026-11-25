@@ -9,7 +9,7 @@ export const dialogLayer = {
 };
 
 const FOCUSABLE =
-  'button, [href], input:not([type="hidden"]), select, textarea, [tabindex]';
+  'button, [href], input:not([type="hidden"]), select, textarea, summary, [tabindex]';
 
 type Dialog = {
   element: HTMLElement;
@@ -27,11 +27,21 @@ function topDialog() {
     !top || dialog.layer >= top.layer ? dialog : top, undefined);
 }
 
+function firstSummary(details: Element | null) {
+  return details?.matches("details") ? details.querySelector(":scope > summary") : null;
+}
+
 function focusableItems(element: HTMLElement) {
-  return Array.from(element.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
-    (item) => item.tabIndex >= 0 && !item.matches(":disabled") &&
-      !item.closest('[hidden], [inert], [aria-hidden="true"]'),
-  );
+  return Array.from(element.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((item) => {
+    const nativeSummary = !item.hasAttribute("tabindex") && firstSummary(item.parentElement) === item;
+    if ((!nativeSummary && item.tabIndex < 0) || item.matches(":disabled") ||
+      item.closest('[hidden], [inert], [aria-hidden="true"]')) return false;
+    for (let details = item.closest("details:not([open])"); details;
+      details = details.parentElement?.closest("details:not([open])") ?? null) {
+      if (!firstSummary(details)?.contains(item)) return false;
+    }
+    return true;
+  });
 }
 
 function focusDialog(dialog: Dialog, preferred?: HTMLElement | null) {

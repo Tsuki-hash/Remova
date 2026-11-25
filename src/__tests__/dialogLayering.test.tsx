@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { dialogLayer, useDialogFocus } from "../lib/useDialogFocus";
 import { afterEach, expect, it } from "vitest";
 import { CheckupPanel } from "../components/CheckupPanel";
 import { CloseChoiceHost } from "../components/ui/CloseChoiceHost";
@@ -10,6 +11,31 @@ import { requestCloseChoice, settleCloseChoice } from "../lib/closeMode";
 import { requestConfirm, settleConfirm } from "../lib/confirm";
 
 afterEach(() => { cleanup(); settleCloseChoice("cancel"); settleConfirm(false); });
+
+it("includes disclosure headings but excludes controls hidden by closed details", () => {
+  function Scene() {
+    const ref = useRef<HTMLDivElement>(null);
+    useDialogFocus(true, ref, dialogLayer.overview);
+    return <div ref={ref} role="dialog">
+      <button>Return</button>
+      <details><summary>More results</summary><button>Inspect</button></details>
+    </div>;
+  }
+  render(<Scene />);
+  const back = screen.getByRole("button", { name: "Return" });
+  const summary = screen.getByText("More results");
+  expect(document.activeElement).toBe(back);
+  fireEvent.keyDown(back, { key: "Tab", shiftKey: true });
+  expect(document.activeElement).toBe(summary);
+  fireEvent.keyDown(summary, { key: "Tab" });
+  expect(document.activeElement).toBe(back);
+  summary.closest("details")!.open = true;
+  summary.focus();
+  expect(fireEvent.keyDown(summary, { key: "Tab", cancelable: true })).toBe(true);
+  screen.getByRole("button", { name: "Inspect" }).focus();
+  fireEvent.keyDown(document.activeElement!, { key: "Tab" });
+  expect(document.activeElement).toBe(back);
+});
 
 it("gives the visible dialog keyboard ownership and restores focus one layer at a time", async () => {
   function Scene() {
