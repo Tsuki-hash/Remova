@@ -6,7 +6,7 @@ on:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
   actions: read
 
 concurrency:
@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
+  build:
     runs-on: windows-2025
     # Release builds are slow; fail the job instead of hanging the runner.
     # Two SignPath requests require maintainer approval. GitHub's job limit is 6h.
@@ -25,6 +25,8 @@ jobs:
       TAURI_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: require successful main CI for the tagged commit
         shell: pwsh
@@ -378,24 +380,96 @@ jobs:
           path: src-tauri/target/release/bundle/msi/*.msi
           if-no-files-found: error
 
+      - name: stage verified draft inputs
+        shell: pwsh
+        env:
+          UPDATER_ENABLED: ${{ steps.signing-config.outputs.updater-enabled }}
+          VERSION: ${{ steps.signing-config.outputs.version }}
+        run: |
+          $bundle = 'src-tauri/target/release/bundle'
+          $handoff = 'release-handoff'
+          $assets = New-Item -ItemType Directory -Path "$handoff/assets"
+          $inputs = @("nsis/Remova_${env:VERSION}_x64-setup.exe", "msi/Remova_${env:VERSION}_x64_zh-CN.msi", "portable/Remova_${env:VERSION}_x64-portable.zip", 'SHA256SUMS.txt', 'SBOM.cdx.json')
+          if ($env:UPDATER_ENABLED -ceq 'true') {
+            $inputs += "$($inputs[0]).sig", "$($inputs[1]).sig", 'latest.json'
+          }
+          foreach ($file in $inputs) {
+            Copy-Item -LiteralPath "$bundle/$file" -Destination $assets.FullName
+          }
+          Copy-Item -LiteralPath ".release-notes/$env:GITHUB_REF_NAME.md" -Destination "$handoff/release-notes.md"
+          $hashes = [ordered]@{}
+          foreach ($file in (Get-ChildItem -LiteralPath $assets.FullName -File)) {
+            $hashes[$file.Name] = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash
+          }
+          [ordered]@{ commit = $env:GITHUB_SHA; tag = $env:GITHUB_REF_NAME; assets = $hashes;
+            notes_sha256 = (Get-FileHash -LiteralPath "$handoff/release-notes.md" -Algorithm SHA256).Hash
+          } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath "$handoff/handoff.json" -Encoding utf8
+
+      - name: upload verified draft inputs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: Remova-release-handoff
+          path: release-handoff/
+          if-no-files-found: error
+
+  draft:
+    needs: build
+    runs-on: windows-2025
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      # This job runs no checkout, package lifecycle hooks or compiler.
+      - name: download and verify draft inputs
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download $env:GITHUB_RUN_ID --repo $env:GITHUB_REPOSITORY --name Remova-release-handoff --dir release-handoff
+          if ($LASTEXITCODE) { throw 'Could not download the verified release inputs.' }
+          $handoff = 'release-handoff'
+          $manifest = Get-Content -Raw -LiteralPath "$handoff/handoff.json" | ConvertFrom-Json -AsHashtable
+          $tag = $env:GITHUB_REF_NAME
+          if ($tag -cnotmatch '^v[0-9]+\.[0-9]+\.[0-9]+$' -or $manifest.tag -cne $tag -or $manifest.commit -cne $env:GITHUB_SHA) {
+            throw 'Draft inputs do not identify the tagged commit.'
+          }
+          $version = $tag.Substring(1)
+          $base = @(
+            "Remova_${version}_x64-setup.exe", "Remova_${version}_x64_zh-CN.msi", "Remova_${version}_x64-portable.zip",
+            'SHA256SUMS.txt', 'SBOM.cdx.json'
+          )
+          $expected = if ($manifest.assets.Count -eq 8) { $base + @("$($base[0]).sig", "$($base[1]).sig", 'latest.json') } else { $base }
+          $files = @(Get-ChildItem -LiteralPath "$handoff/assets" -Force)
+          if ($files.Count -ne $expected.Count -or $manifest.assets.Count -ne $expected.Count) {
+            throw 'Unexpected draft attachment count.'
+          }
+          foreach ($name in $expected) {
+            $file = Get-Item -LiteralPath "$handoff/assets/$name"
+            if ($file.PSIsContainer -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+                !$manifest.assets.Contains($name) -or (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash -cne $manifest.assets[$name]) {
+              throw "Draft attachment identity or checksum mismatch: $name"
+            }
+          }
+          if ((Get-FileHash -LiteralPath "$handoff/release-notes.md" -Algorithm SHA256).Hash -cne $manifest.notes_sha256) {
+            throw 'Draft release notes checksum mismatch.'
+          }
+          $taggedCommit = gh api "repos/$env:GITHUB_REPOSITORY/commits/refs/tags/$tag" --jq '.sha'
+          if ($LASTEXITCODE -or $taggedCommit -cne $env:GITHUB_SHA) { throw 'The release tag moved during verification.' }
+          $existing = & gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag" 2>&1
+          if ($LASTEXITCODE -eq 0) {
+            if (($existing | Out-String | ConvertFrom-Json).draft -ne $true) { throw 'This tag already has a published release.' }
+          } elseif (($existing | Out-String) -notmatch '404') {
+            throw 'Could not determine the existing release state.'
+          }
+          exit 0
+
       - name: create GitHub release draft
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
-          # Updater assets exist only in updater-signing mode. The `.sig` and
-          # `latest.json` globs are omitted in the unsigned/manual mode so
-          # `fail_on_unmatched_files` does not reject a valid installer-only
-          # release (the mode is decided by prepare-signed-release.ps1).
-          files: |
-            src-tauri/target/release/bundle/nsis/*.exe
-            src-tauri/target/release/bundle/msi/*.msi
-            src-tauri/target/release/bundle/portable/*.zip
-            ${{ steps.signing-config.outputs.updater-enabled == 'true' && 'src-tauri/target/release/bundle/nsis/*.sig' || '' }}
-            ${{ steps.signing-config.outputs.updater-enabled == 'true' && 'src-tauri/target/release/bundle/msi/*.sig' || '' }}
-            ${{ steps.signing-config.outputs.updater-enabled == 'true' && 'src-tauri/target/release/bundle/latest.json' || '' }}
-            src-tauri/target/release/bundle/SHA256SUMS.txt
-            src-tauri/target/release/bundle/SBOM.cdx.json
-          body_path: .release-notes/${{ github.ref_name }}.md
+          tag_name: ${{ github.ref_name }}
+          target_commitish: ${{ github.sha }}
+          files: release-handoff/assets/*
+          body_path: release-handoff/release-notes.md
           generate_release_notes: false
-          # a renamed/moved bundle must fail the job, not publish an asset-less Release.
           fail_on_unmatched_files: true
           draft: true
